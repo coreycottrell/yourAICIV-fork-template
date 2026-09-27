@@ -54,6 +54,38 @@ def _require_secret_key():
 
 _SECRET_KEY = _require_secret_key()
 
+
+# ── Reseller partner (who else hears about this client's business) ───────
+# The AiCIV's partner profile (<civ>/config/partner.json, "notify_emails") is
+# the source; PARTNER_NOTIFY_EMAILS (env / .env, comma separated) wins when
+# set. Every owner alert (lead / order / booking / affiliate application) is
+# also emailed to these addresses. Empty = the partner is not notified.
+def _partner_profile():
+    import json as _json
+    import re as _re
+    rx = _re.compile(r"^[^@\s,;<>]+@[^@\s,;<>]+\.[^@\s,;<>]+$")
+    brand, emails = "yourAICIV", []
+    civ = os.environ.get("CIV_ROOT", "").strip()
+    civ_root = Path(civ) if civ and "${" not in civ else INSTANCE_DIR.parent.parent
+    try:
+        raw = _json.loads((civ_root / "config" / "partner.json").read_text())
+        if isinstance(raw, dict):
+            brand = str(raw.get("brand") or brand).strip() or brand
+            emails = [str(e).strip() for e in (raw.get("notify_emails") or [])]
+    except (OSError, ValueError):
+        brand = "AiCIV"
+    env = os.environ.get("PARTNER_NOTIFY_EMAILS", "").strip()
+    if env:
+        emails = _re.split(r"[\s,;]+", env)
+    out = []
+    for e in emails:
+        if e and rx.match(e) and e.lower() not in {o.lower() for o in out}:
+            out.append(e)
+    return brand, out
+
+
+_PARTNER_BRAND, _PARTNER_EMAILS = _partner_profile()
+
 CLIENT_CONFIG = {
     # ── Identity ──────────────────────────────────────────────────────────
     "business_name": "Acme Business",
@@ -105,6 +137,14 @@ CLIENT_CONFIG = {
     # outage never slows or fails the visitor's request; results are logged.
     "telegram_bot_token": os.environ.get("TELEGRAM_BOT_TOKEN", ""),
     "telegram_chat_id": os.environ.get("TELEGRAM_CHAT_ID", ""),
+
+    # Reseller partner: gets an email copy of every owner alert above (see
+    # _partner_profile). Sent through this app's email provider (Resend);
+    # when email is not configured or the send fails, the alert is queued to
+    # logs/partner-outbox.jsonl and the AiCIV sends it from its own inbox
+    # (tools/partner_notify.py flush). Never slows or fails the request.
+    "partner_notify_emails": _PARTNER_EMAILS,
+    "partner_brand": _PARTNER_BRAND,
 
     # ── Payments (enable what client needs) ───────────────────────────────
     "payment_providers": [],    # ["clickbrick", "barterpay", "stripe"]

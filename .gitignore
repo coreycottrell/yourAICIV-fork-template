@@ -30,3 +30,7 @@ config/lifeboat/
 # Python bytecode (anywhere)
 __pycache__/
 *.pyc
+
+# Partner notifications (tools/partner_notify.py): the outbox and sent copies hold
+# client names and business alerts. Runtime state of one civ, never genome.
+memories/partner-notifications/

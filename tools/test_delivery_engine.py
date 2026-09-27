@@ -7,7 +7,10 @@ clone_client.sh, then runs tools/delivery_engine_checks.py inside it
 (in-process Flask test client; Stripe, Telegram and Resend are stubbed, no
 port is bound, nothing leaves the box). The temp dir is deleted afterwards.
 
-Coverage: the security hardening checks, plus the automation checks (AUTO):
+Coverage: the security hardening checks, the partner copies of business alerts
+(PARTNER: lead / order / booking / affiliate each email the reseller partner once;
+no email provider -> queued to logs/partner-outbox.jsonl and sent by the AiCIV's
+tools/partner_notify.py flush through a loopback AgentMail stub), plus the automation checks (AUTO):
 a contact form fires a Telegram lead alert and a welcome-workflow enrollment;
 alerts for order / booking / affiliate application; Telegram down or hanging
 never fails or slows the request; scheduled steps send (day 0 / 2 / 7) through
@@ -79,8 +82,11 @@ def main(argv=None) -> int:
         inst = apps / SLUG
         env.update({"DE_SELFTEST_INSTANCE": str(inst),
                     "CLIENT_PUBLIC_BASE_URL": f"https://{SLUG}.example.com"})
-        for k in ("STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET", "RESEND_API_KEY", "TELEGRAM_BOT_TOKEN"):
+        for k in ("STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET", "RESEND_API_KEY", "TELEGRAM_BOT_TOKEN",
+                  "PARTNER_NOTIFY_EMAILS", "CIV_ROOT"):
             env.pop(k, None)
+        for k in [k for k in env if k.startswith("AGENTMAIL_")]:
+            env.pop(k)
         r = subprocess.run([py, str(CHECKS)], cwd=inst / "app", env=env, text=True)
         return r.returncode
     finally:

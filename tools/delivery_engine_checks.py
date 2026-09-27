@@ -700,6 +700,124 @@ while not to("rita@example.org") and time.time() < end:
 check("AUTO in-process runner sent the welcome within seconds (woken on enrollment)",
       started and len(to("rita@example.org")) == 1)
 
+# ── PARTNER: every owner alert is copied to the reseller partner (ws8) ──
+import http.server
+PARTNER = "cryptoconsultants1@gmail.com"
+check("PARTNER no partner configured by default in a bare instance (no civ partner.json)",
+      cfg.CLIENT_CONFIG.get("partner_notify_emails") == [])
+cfg.CLIENT_CONFIG["partner_notify_emails"] = [PARTNER]
+cfg.CLIENT_CONFIG["partner_brand"] = "yourAICIV"
+cfg.CLIENT_CONFIG["resend_api_key"] = "re_test_placeholder"
+pmail, pevt = [], threading.Event()
+def partner_send(to, subj, body, tags=None, headers=None):
+    if to == PARTNER:
+        pmail.append({"to": to, "subj": subj, "body": body, "tags": tags})
+    return f"em_p{len(pmail)}"
+H["send_email"] = partner_send
+def wait_p(n, secs=3.0):
+    end = time.time() + secs
+    while len(pmail) < n and time.time() < end:
+        time.sleep(0.02)
+    time.sleep(0.15)                       # let any duplicate land before counting
+    return len(pmail) == n
+biz = cfg.CLIENT_CONFIG["business_name"]
+n_tg = len(tg_calls)
+post(client("10.30.0.1"), "/contact", {"name": "Pia Partner", "email": "pia@example.org",
+                                       "message": "Need a quote for 40 people"})
+check("PARTNER lead -> exactly one email to the partner",
+      wait_p(1) and pmail[0]["subj"] == f"[yourAICIV] {biz} - new lead"
+      and "New lead: Pia Partner (pia@example.org)" in pmail[0]["body"] and "40 people" in pmail[0]["body"],
+      str(pmail)[:300])
+check("PARTNER lead -> the owner's Telegram alert still fires alongside", wait_tg(n_tg + 1))
+check("PARTNER email body is escaped HTML (visitor text inert)",
+      pmail and pmail[0]["body"].startswith("<pre") and "<script" not in pmail[0]["body"])
+post(client("10.30.0.2"), "/book", {"name": "Bo Booker", "email": "bo@example.org",
+                                    "date": "2026-11-03", "time": "10:00", "notes": "<script>x</script>"})
+check("PARTNER booking -> exactly one more partner email ('new booking')",
+      wait_p(2) and pmail[1]["subj"].endswith("- new booking") and "&lt;script&gt;" in pmail[1]["body"],
+      str(pmail[1:])[:300])
+post(client("10.30.0.3"), "/affiliate/apply", {"name": "Ada Aff", "email": "ada@example.org"})
+check("PARTNER affiliate application -> exactly one more partner email",
+      wait_p(3) and pmail[2]["subj"].endswith("- new affiliate application"), str(pmail[2:])[:300])
+cfg.CLIENT_CONFIG["payment"]["active_provider"] = "manual"
+ob2 = client("10.30.0.4")
+post(ob2, "/cart/add", {"product_id": "cheap", "qty": "1"}, ref="/store")
+post(ob2, "/checkout", {"name": "Otto Order", "email": "otto@example.org"}, ref="/cart")
+cfg.CLIENT_CONFIG["payment"]["active_provider"] = "stripe"
+check("PARTNER order -> exactly one more partner email with the total",
+      wait_p(4) and pmail[3]["subj"].endswith("- new order") and "Otto Order" in pmail[3]["body"]
+      and "$10.00" in pmail[3]["body"], str(pmail[3:])[:300])
+
+outbox = A.partner_outbox_path()
+def outbox_lines():
+    try:
+        return [json.loads(l) for l in open(outbox).read().splitlines() if l.strip()]
+    except OSError:
+        return []
+def wait_outbox(n, secs=3.0):
+    end = time.time() + secs
+    while len(outbox_lines()) < n and time.time() < end:
+        time.sleep(0.02)
+    time.sleep(0.15)
+    return len(outbox_lines()) == n
+cfg.CLIENT_CONFIG["resend_api_key"] = ""
+r = post(client("10.30.0.5"), "/contact", {"name": "Quinn Queue", "email": "quinn@example.org", "message": "m"})
+check("PARTNER no email provider: request still 302, alert queued once to logs/partner-outbox.jsonl",
+      r.status_code == 302 and wait_outbox(1) and len(pmail) == 4
+      and outbox_lines()[0]["to"] == [PARTNER] and outbox_lines()[0]["subject"].endswith("- new lead")
+      and "Quinn Queue" in outbox_lines()[0]["text"], str(outbox_lines())[:300])
+check("PARTNER outbox file is private (0600)", os.path.exists(outbox) and os.stat(outbox).st_mode & 0o777 == 0o600)
+cfg.CLIENT_CONFIG["resend_api_key"] = "re_test_placeholder"
+H["send_email"] = lambda *a, **kw: None
+post(client("10.30.0.6"), "/contact", {"name": "Fred Fail", "email": "fred@example.org", "message": "m"})
+check("PARTNER provider rejects the send -> queued (not lost), exactly once",
+      wait_outbox(2) and "Fred Fail" in outbox_lines()[1]["text"] and outbox_lines()[1]["why"] == "send failed")
+def slow_partner(*a, **kw):
+    time.sleep(3)
+H["send_email"] = slow_partner
+t0 = time.time()
+r = post(client("10.30.0.7"), "/contact", {"name": "Sid Slow", "email": "sid@example.org", "message": "m"})
+check("PARTNER slow email provider: response not delayed (<1s)", r.status_code == 302 and time.time() - t0 < 1.0,
+      f"{time.time() - t0:.2f}s")
+H["send_email"] = partner_send
+cfg.CLIENT_CONFIG["partner_notify_emails"] = []
+n_p, n_o = len(pmail), len(outbox_lines())
+post(client("10.30.0.8"), "/contact", {"name": "Nia Nobody", "email": "nia@example.org", "message": "m"})
+time.sleep(0.4)
+check("PARTNER no partner addresses: nothing emailed, nothing queued",
+      len(pmail) == n_p and len(outbox_lines()) == n_o)
+
+# The AiCIV sends queued site alerts from its own inbox (tools/partner_notify.py flush).
+posts = []
+class _AM(http.server.BaseHTTPRequestHandler):
+    def do_POST(self):
+        body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        posts.append({"path": self.path, "auth": self.headers.get("Authorization"), "body": json.loads(body)})
+        self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers()
+        self.wfile.write(b'{"message_id": "m1"}')
+    def log_message(self, *a):
+        pass
+srv = http.server.HTTPServer(("127.0.0.1", 0), _AM)
+threading.Thread(target=srv.serve_forever, daemon=True).start()
+civ_root = os.path.dirname(os.path.dirname(os.path.dirname(os.getcwd())))
+tools_dir = os.path.dirname(os.path.abspath(__file__))
+fenv = {k: v for k, v in os.environ.items() if not k.startswith(("AGENTMAIL_", "PARTNER_NOTIFY"))}
+fenv.update({"AGENTMAIL_API_KEY": "am_test_dummy", "AGENTMAIL_INBOX": "keel@agentmail.to",
+             "AGENTMAIL_API_BASE": f"http://127.0.0.1:{srv.server_port}", "AGENTMAIL_ENV_FILE": "/nonexistent"})
+queued = len(outbox_lines())
+time.sleep(3.2)                             # the slow sender finished; nothing else in flight
+queued = len(outbox_lines())
+p = subprocess.run([sys.executable, os.path.join(tools_dir, "partner_notify.py"), "flush", "--root", civ_root],
+                   env=fenv, capture_output=True, text=True)
+check("PARTNER civ flush sends every queued site alert once from the AiCIV's inbox",
+      p.returncode == 0 and len(posts) == queued and all(x["body"]["to"] == PARTNER for x in posts)
+      and all(x["path"] == "/v0/inboxes/keel@agentmail.to/messages/send" for x in posts)
+      and not os.path.exists(outbox), f"{queued} {len(posts)} {p.stdout} {p.stderr[-300:]}")
+subprocess.run([sys.executable, os.path.join(tools_dir, "partner_notify.py"), "flush", "--root", civ_root],
+               env=fenv, capture_output=True, text=True)
+check("PARTNER second flush sends nothing more", len(posts) == queued)
+srv.shutdown()
+
 print()
 fails = [n for n, ok in RESULTS if not ok]
 print(f"{len(RESULTS) - len(fails)}/{len(RESULTS)} passed")

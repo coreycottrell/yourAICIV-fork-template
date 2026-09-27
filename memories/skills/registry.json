@@ -33,6 +33,32 @@
       ],
       "fires_from": "CLIENT-ONBOARDING gate (.claude/CLAUDE.md), wake-up-protocol Step 6.5, on request",
       "added": "2026-09-27"
+    },
+    "partner-notifications": {
+      "path": ".claude/skills/partner-notifications/SKILL.md",
+      "status": "provisional",
+      "category": "partner",
+      "applicable_agents": [
+        "primary",
+        "comms-vp",
+        "dev-vp"
+      ],
+      "summary": "Email the reseller partner (config/partner.json notify_emails) once per event: born, first conversation, WOW build shipped, trial day 6 / expired / converted, self-detected health problems, delivery-engine business alerts. Thin sender: tools/partner_notify.py; queues to an outbox when email is not provisioned.",
+      "keywords": [
+        "partner",
+        "reseller",
+        "travis",
+        "notify",
+        "notification",
+        "email partner",
+        "wow shipped",
+        "trial expired",
+        "converted",
+        "health",
+        "lead alert"
+      ],
+      "fires_from": "you (first conversation, WOW shipped, health) + session_start hook, trial_gate hook, tools/watchdog.sh tick, apply_trial_profile convert, delivery engine notify_owner",
+      "added": "2026-09-27"
     }
   },
   "notes": "Skills registry grows as skills are created. See .claude/skills/ for SKILL.md files."

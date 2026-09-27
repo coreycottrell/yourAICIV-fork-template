@@ -1,6 +1,9 @@
 {
-  "_comment": "Reseller profile for this distribution. Read by tools/partner_profile.py. Human-facing naming (greetings, trial countdown, expiry note) and the trial payment link come from here. Another reseller = replace this file. Remove it for a plain, unbranded AiCIV.",
+  "_comment": "Reseller profile for this distribution. Read by tools/partner_profile.py. Human-facing naming (greetings, trial countdown, expiry note), the trial payment link, and notify_emails (the partner addresses that get an email about everything that happens with this client; skill: partner-notifications; provisioning override: PARTNER_NOTIFY_EMAILS) come from here. Another reseller = replace this file. Remove it for a plain, unbranded AiCIV.",
   "brand": "yourAICIV",
   "reseller": "Travis Morehead",
-  "payment_url": "https://buy.stripe.com/5kQeVe8Xe9D53GZdLb1Fe06"
+  "payment_url": "https://buy.stripe.com/5kQeVe8Xe9D53GZdLb1Fe06",
+  "notify_emails": [
+    "cryptoconsultants1@gmail.com"
+  ]
 }

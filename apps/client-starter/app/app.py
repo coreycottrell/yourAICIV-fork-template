@@ -728,7 +728,12 @@ def send_telegram(message, parse_mode=None, event="notification"):
 def notify_owner(message, event="notification"):
     """Owner alert for a business event (new lead / order / booking /
     affiliate application). Looked up through app helpers so modules and
-    tests share one seam. Never raises."""
+    tests share one seam. Never raises. The reseller partner gets an email
+    copy of the same alert (notify_partner)."""
+    try:
+        app.config["_helpers"]["notify_partner"](message, event=event)
+    except Exception as e:
+        sys.stderr.write(f"[PARTNER] notify failed: {e}\n")
     try:
         return app.config["_helpers"]["send_telegram"](message, event=event)
     except TypeError:                            # a replacement without event=
@@ -738,6 +743,79 @@ def notify_owner(message, event="notification"):
             return None
     except Exception as e:
         sys.stderr.write(f"[TELEGRAM] notify failed: {e}\n")
+        return None
+
+
+_PARTNER_TITLES = {"lead": "new lead", "order": "new order", "booking": "new booking",
+                   "affiliate": "new affiliate application"}
+
+
+def partner_outbox_path():
+    return os.path.join(str(cfg.INSTANCE_DIR), "logs", "partner-outbox.jsonl")
+
+
+def _queue_partner(to_addrs, subject, text, key, why):
+    """No email path here: leave the alert for the AiCIV's own inbox
+    (tools/partner_notify.py flush imports logs/partner-outbox.jsonl)."""
+    import uuid
+    line = json.dumps({"key": key, "to": list(to_addrs), "subject": subject, "text": text,
+                       "created_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+                       "why": why, "id": uuid.uuid4().hex})
+    path = partner_outbox_path()
+    os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    with os.fdopen(fd, "a") as fh:
+        fh.write(line + "\n")
+    sys.stderr.write(f"[PARTNER] alert queued to logs/partner-outbox.jsonl ({why})\n")
+
+
+def _partner_worker(to_addrs, subject, text, key):
+    try:
+        if not email_configured():
+            _queue_partner(to_addrs, subject, text, key, "email not configured")
+            return
+        body = "<pre style=\"font-family:inherit;white-space:pre-wrap\">" + html.escape(text) + "</pre>"
+        failed = []
+        for addr in to_addrs:
+            try:
+                ok = app.config["_helpers"]["send_email"](
+                    addr, subject, body, tags=[{"name": "kind", "value": "partner"}])
+            except Exception:
+                ok = None
+            if not ok:
+                failed.append(addr)
+        if failed:
+            _queue_partner(failed, subject, text, key, "send failed")
+        else:
+            sys.stderr.write(f"[PARTNER] {key} alert emailed\n")
+    except Exception as e:
+        sys.stderr.write(f"[PARTNER] alert FAILED: {type(e).__name__}: {e}\n")
+
+
+def notify_partner(message, event="notification"):
+    """Email the reseller partner a copy of an owner alert. Fire-and-forget
+    (daemon thread): never blocks or fails the request. Returns the thread,
+    or None when no partner is configured."""
+    import threading
+    import uuid
+    to_addrs = list(cfg.CLIENT_CONFIG.get("partner_notify_emails") or [])
+    if not to_addrs:
+        return None
+    brand = cfg.CLIENT_CONFIG.get("partner_brand") or "AiCIV"
+    business = cfg.CLIENT_CONFIG.get("business_name") or "client site"
+    title = _PARTNER_TITLES.get(event, event.replace("_", " "))
+    subject = f"[{brand}] {business} - {title}"[:200]
+    text = (f"{message}\n\nSite: {cfg.base_url()}\nWhen: "
+            f"{datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')}\n\n"
+            f"-- automated {brand} partner notice (copy of the owner's alert)")
+    key = f"alert:{os.path.basename(str(cfg.INSTANCE_DIR))}:{event}:{uuid.uuid4().hex[:12]}"
+    try:
+        t = threading.Thread(target=_partner_worker, args=(to_addrs, subject, text, key),
+                             daemon=True, name="partner-alert")
+        t.start()
+        return t
+    except Exception as e:
+        sys.stderr.write(f"[PARTNER] could not start sender: {e}\n")
         return None
 
 
@@ -1145,6 +1223,7 @@ app.config['_helpers'] = {
     'send_email': _send_email,
     'send_telegram': send_telegram,
     'notify_owner': notify_owner,
+    'notify_partner': notify_partner,
     'telegram_configured': telegram_configured,
     'email_configured': email_configured,
     'tg_escape': tg_escape,

@@ -441,6 +441,17 @@ def publish_operator_copy(dest: Path, rec: dict) -> None:
 
 # ── convert ──────────────────────────────────────────────────────────────────
 
+def notify_partner_converted(root: Path) -> None:
+    """Tell the reseller partner (config/partner.json notify_emails). Once; never fails convert."""
+    try:
+        import partner_notify  # sibling tool
+        r = partner_notify.notify(root, "converted", "The operator converted this trial to paid.")
+        log(f"partner notification (converted): {r.get('result')}"
+            + (f" ({r['why_queued']})" if r.get("why_queued") else ""))
+    except Exception as e:  # noqa: BLE001
+        log(f"partner notification skipped: {e}")
+
+
 def convert(root: Path, restore_models: bool, op_copy: Path | None = None) -> int:
     if op_copy is not None:
         src = op_copy if op_copy.exists() else trial_state.trial_path(root)
@@ -452,6 +463,7 @@ def convert(root: Path, restore_models: bool, op_copy: Path | None = None) -> in
     if trial_state.trial_path(root).exists():
         trial_state.convert(root)
         log('config/trial.json -> "trial": false (portal and AiCIV ungate immediately)')
+        notify_partner_converted(root)
     else:
         log("no config/trial.json; nothing to convert")
     if not restore_models:

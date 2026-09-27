@@ -205,6 +205,19 @@ def main():
     # MEMORY INJECTION: Recent agent learnings and handoffs
     inject_recent_memories()
 
+    # PARTNER NOTIFICATIONS (skill: partner-notifications): report anything the disk
+    # shows happened (born, first conversation, WOW shipped, trial milestones) to the
+    # reseller partner, in the background, once per event. Say so if email is missing.
+    try:
+        sys.path.insert(0, str(Path(PROJECT_DIR) / "tools"))
+        import partner_notify
+        partner_notify.kick(Path(PROJECT_DIR))
+        line = partner_notify.status_line(Path(PROJECT_DIR))
+        if line:
+            print(line)
+    except Exception as e:  # never let a notification break session start
+        print(f"[Partner notifications] unavailable: {e}", file=sys.stderr)
+
     # COMPACT RECOVERY: Inject CEO identity inline + BOOP resume after context compaction
     # This is CRITICAL - without this, Primary loses identity and BOOP work mode after auto-compact
     # UPGRADED 2026-02-19: Now injects actual identity content, not just instructions to read files

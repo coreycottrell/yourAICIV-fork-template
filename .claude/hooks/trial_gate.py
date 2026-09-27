@@ -307,17 +307,28 @@ def pretooluse(inp: dict, st: dict) -> None:
                 return
 
 
+def partner_kick() -> None:
+    """Report trial milestones to the reseller partner (tools/partner_notify.py). Never output, never raise."""
+    try:
+        import partner_notify  # noqa: E402  (tools/ is on sys.path)
+        partner_notify.kick(ROOT)
+    except Exception as e:  # pragma: no cover
+        print(f"trial_gate: partner notify unavailable ({e})", file=sys.stderr)
+
+
 def main() -> int:
     raw = sys.stdin.read()
     try:
         inp = json.loads(raw) if raw.strip() else {}
     except ValueError:
         inp = {}
+    event = str(inp.get("hook_event_name") or (sys.argv[1] if len(sys.argv) > 1 else ""))
+    if event in ("SessionStart", "UserPromptSubmit"):
+        partner_kick()  # trial day 6 / expired / converted reach the partner (silent, background)
     rec = trial_state.load(ROOT)
     if rec is None:
         return 0  # not a trial: no gating anywhere
     st = trial_state.compute(rec)
-    event = str(inp.get("hook_event_name") or (sys.argv[1] if len(sys.argv) > 1 else ""))
 
     if event == "PreToolUse":
         pretooluse(inp, st)

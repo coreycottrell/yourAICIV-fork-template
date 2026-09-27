@@ -85,6 +85,10 @@ with a specific thread from their seed, and keeps building from what the seed al
   round → Ship (ship-evidence + tell the human). A build whose evidence doesn't verify is **not shipped**. Say so
   honestly and fix it.
 - When a build ships, tell them right away: what it is, where it is, and what it does for their goal.
+- Then tell the reseller partner, one line (skill `partner-notifications`):
+  `python3 tools/partner_notify.py send --event wow_shipped --build <N> --summary "<what>" --link "<url>"`.
+  Your first conversation (Phase 5 lock), trial day 6, expiry and conversion reach the partner the same way;
+  the last three are sent for you.
 
 **Strong Build #1 shapes for the yourAICIV audience (small-business owners):** if the client-delivery engine is
 present in this civ (`apps/client-starter/` + `.claude/skills/client-onboarding/`), a live funnel/CRM site for

@@ -76,6 +76,7 @@ track_restart() {
 
     if (( recent >= MAX_RESTARTS )); then
         log "CRASH-LOOP: ${name} restarted ${recent} times in ${RESTART_WINDOW}s — backing off"
+        partner_health "crash_loop_${name}" "${name} keeps failing: restarted ${recent} times in ${RESTART_WINDOW}s, the watchdog backed off."
         return 1
     fi
     return 0
@@ -194,8 +195,10 @@ claude_check() {
         CLAUDE_ALIVE=false
         if [[ ! -f /tmp/claude-down-alert ]]; then
             log "ALERT: Claude Code is DOWN — manual intervention required"
+            echo "$(date -Iseconds)" > /tmp/claude-down-alert   # keeps the first-down time
+        elif (( $(date +%s) - $(stat -c %Y /tmp/claude-down-alert) >= 600 )); then
+            partner_health "aiciv_down" "The AiCIV's Claude Code process has been down for 10+ minutes (since $(cat /tmp/claude-down-alert)). The watchdog never restarts it; it needs a restart."
         fi
-        echo "$(date -Iseconds)" > /tmp/claude-down-alert
     fi
     # NEVER restart Claude — alert only
 }
@@ -214,6 +217,24 @@ client_sites_check() {
     log "Client sites down: ${CLIENT_SITES_DOWN} -- starting"
     CLIENT_VENV="${CLAUDE_PROJECT_DIR}/apps/.venv" python3 "$tool" ensure >> "$LOG" 2>&1 || \
         log "Client sites: some did not start (see apps/<slug>/logs/app.log)"
+}
+
+# Partner notifications (skill: partner-notifications): the reseller partner hears
+# about this client's milestones, business alerts, and health problems. `tick`
+# reports what the disk shows, probes the model router, and sends the outbox.
+# Never fails the cycle.
+partner_check() {
+    local tool="${CLAUDE_PROJECT_DIR}/tools/partner_notify.py"
+    [[ -f "$tool" ]] || return 0
+    timeout 50 python3 "$tool" tick --root "$CLAUDE_PROJECT_DIR" >> "$LOG" 2>&1 || true
+}
+
+# partner_health <kind> <summary>  -- at most one email per kind per day
+partner_health() {
+    local tool="${CLAUDE_PROJECT_DIR}/tools/partner_notify.py"
+    [[ -f "$tool" ]] || return 0
+    timeout 30 python3 "$tool" send --root "$CLAUDE_PROJECT_DIR" --event health \
+        --kind "$1" --summary "$2" >> "$LOG" 2>&1 || true
 }
 
 # ── Status Output ────────────────────────────────────────────────────
@@ -246,6 +267,7 @@ while true; do
     tmux_check
     claude_check
     client_sites_check
+    partner_check
     write_status_json
     sleep "$CHECK_INTERVAL"
 done
