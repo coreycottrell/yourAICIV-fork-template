@@ -73,7 +73,8 @@ Every client gets a `memories/clients/{client-slug}/STATUS` file containing exac
 `intake` -> `provision` -> `customize` -> `verify` -> `handed-off`
 
 Write the word when you **enter** a phase. Also write `memories/clients/{client-slug}/instance.json`
-right after cloning: `{"slug", "port", "instance_dir", "created_at"}`. **No secrets** go in
+right after cloning: `{"slug", "port", "instance_dir", "public_url", "created_at"}` (`public_url` = the
+`PUBLIC URL:` line clone_client.sh printed). **No secrets** go in
 this file. No admin password exists anywhere: the client sets it through the single-use
 setup link (Step 5.1). Only its scrypt hash is stored, in the instance database.
 
@@ -118,7 +119,10 @@ If `config/trial.json` exists with `"trial": true`:
   client instance on the *public* internet leaves it collecting third-party PII and orders with
   nobody patching it if the trial expires. Until Corey decides, prefer loopback or a private
   preview URL for demos during the trial, and treat public go-live (proxy, DNS, live payments)
-  as something to confirm with your human first.
+  as something to confirm with your human first. During a trial, clone with
+  `CLIENT_GO_LIVE=0` and run `tools/client_sites.py go-live` only after your human says yes.
+  (If the trial expires, the portal answers every client site with a neutral 503 page on its
+  own; nothing is stopped or deleted.)
 
 ### 1.6 Reality check: what the scaffold actually does (verified in code, 2026-09-27)
 
@@ -150,7 +154,10 @@ PORT=<port>; SLUG=<client-slug>
 curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:$PORT/             # expect 200
 curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:$PORT/admin/login  # expect 200
 curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:$PORT/admin        # expect 302 (to login)
+python3 ${CIV_ROOT}/tools/client_sites.py verify $SLUG                          # through the portal: expect 200
 ```
+`clone_client.sh` normally does the start + register + portal check itself (Step 2.8); the
+block above is how you re-check it, or do it by hand after cloning with `CLIENT_GO_LIVE=0`.
 Do **not** use the setup link yourself: it is single use and belongs to the client. To prove
 login end to end, the client (or you, with the client's go-ahead, on a throwaway instance)
 opens the link, sets a password, and lands on `/admin`. Session cookies are `Secure`, so a
@@ -236,7 +243,7 @@ This playbook assumes the reusable client-starter scaffold exists. The scaffold 
 - Public page skeleton (landing, contact form)
 - Telegram notification helper (defined but not yet called: see Part 1, R3)
 - Payment provider framework (Stripe default; alternatives: ACH, BarterPay, ClickBrick, crypto, manual)
-- clone_client.sh: one-command standup with random secrets, port allocation, and deploy instructions
+- clone_client.sh: one-command standup with random secrets, port allocation, and go-live through the portal
 
 **The scaffold is BUILT and included at `apps/client-starter/`.** Stand up each client with `clone_client.sh` exactly as in Step 2.1.
 
@@ -287,7 +294,7 @@ Ask these in order. Record answers verbatim -- they drive every decision in Phas
 | # | Question | What it decides |
 |---|----------|-----------------|
 | D1 | What email address should system notifications come from? (e.g., hello@yourbiz.com) | Resend/SMTP config, DNS records |
-| D2 | Do you have a domain? Do you want your admin panel at yourdomain.com/admin or a subdomain? | Tunnel/proxy route config |
+| D2 | Do you have a domain you want the site on? (It goes live first at your AI's address, /site/<slug>/) | Custom-domain upgrade, Step 2.8 |
 | D3 | Who else besides you needs admin access? (Partner, VA, employee?) | Additional admin accounts |
 
 ### Intake Artifacts
@@ -323,7 +330,7 @@ PATH="${CIV_ROOT}/apps/.venv/bin:$PATH" ./clone_client.sh <client-slug> [port]  
 
 Then set `memories/clients/<client-slug>/STATUS` to `provision`, write `instance.json` (no secrets), and run the Part 1, 1.7 smoke test.
 
-This creates the client directory at `apps/<client-slug>/`, generates random secrets (.env), initializes the database, assigns a port, and prints manual deploy steps. See clone_client.sh output for the exact directory and credentials.
+This creates the client directory at `apps/<client-slug>/`, generates random secrets (.env), initializes the database, assigns a port, and **goes live through your portal** (Step 2.8): the site starts on `127.0.0.1:<port>`, is registered, and is checked through the portal. The output ends with `PUBLIC URL: <portal public URL>/site/<client-slug>/`. Set `PORTAL_PUBLIC_URL` (env or `~/.env`) before cloning so that URL, the setup link and payment return URLs carry your real public address.
 
 ### Step 2.2: Admin Auth
 
@@ -335,7 +342,7 @@ clone_client.sh already generates (all in `.env`, mode 0600):
 **What you still do**:
 - Keep the setup link for Step 5.1 (if it expires first, re-issue it:
   `cd apps/<client-slug>/app && python3 manage.py issue-setup-link --port <port>`)
-- Verify the login page renders locally at `http://127.0.0.1:<port>/admin/login` now, and through the proxy at `/{client-slug}/admin/login` after Step 2.8
+- Verify the login page renders locally at `http://127.0.0.1:<port>/admin/login` now, and publicly at `<portal public URL>/site/{client-slug}/admin/login` (Step 2.8)
 
 **Definition of done**:
 - [ ] Client can log in at the admin URL
@@ -459,12 +466,33 @@ Connect the client's Telegram to their system for real-time alerts.
 
 ### Step 2.8: Deployment -- Make It Live
 
-Make the app accessible on the internet. Follow the manual deploy steps printed by clone_client.sh:
+Your portal already has a public HTTPS address. It publishes every registered client site at
+`<portal public URL>/site/<client-slug>/`, so going live needs no DNS, proxy or tunnel work.
+`clone_client.sh` runs this for you at the end; to do it by hand (or re-do it):
 
-1. Start it under gunicorn: the systemd unit in `apps/<client-slug>/deploy/` (preferred; own OS user) or `run.sh` added to start_all.sh (R4). Never the dev server, never `FLASK_DEBUG=1` (the app refuses debug on a non-loopback host)
-2. Add to reverse proxy (route to the app port)
-3. (Optional) Add to Cloudflare Tunnel or similar ingress
-4. (Optional) Configure DNS for custom domain
+```bash
+python3 ${CIV_ROOT}/tools/client_sites.py go-live <client-slug> --port <port> --dir ${CIV_ROOT}/apps/<client-slug>
+# starts apps/<client-slug>/run.sh (gunicorn, 127.0.0.1 only) if it is not running,
+# registers the site in ~/.client-sites.json (the portal reads it live, no restart),
+# sets CLIENT_PUBLIC_BASE_URL in the instance .env if empty, checks it through the portal,
+# prints: PUBLIC URL: <portal public URL>/site/<client-slug>/
+python3 ${CIV_ROOT}/tools/client_sites.py list      # every site: port, up/DOWN, public URL
+```
+
+- **It stays up.** `tools/watchdog.sh` runs `client_sites.py ensure` every minute and starts any
+  registered site that is down (reboots, crashes). With systemd available you may use the
+  rendered unit in `apps/<client-slug>/deploy/` instead; still register the site.
+- **After editing `.env`** (Stripe, email, Telegram keys): `client_sites.py stop <slug>` then
+  `client_sites.py start <slug>`.
+- **The admin area is public-facing but locked**: `/admin` is served like every other page and
+  protected by the site's own login. The portal's access code is never needed or forwarded.
+- **Client's own domain (optional upgrade, needs a human):** (1) at the client's registrar,
+  point the domain at the same address as your portal; (2) the fleet operator adds a TLS proxy
+  entry for that domain forwarding to your portal, the same way your portal's own address is
+  set up; (3) you run `client_sites.py domain <slug> add <domain>`, set
+  `CLIENT_PUBLIC_BASE_URL='https://<domain>'` in the instance `.env`, and restart the site. The
+  portal then serves the site at the domain root. Ask your human; never change DNS yourself.
+- Never the dev server, never `FLASK_DEBUG=1`, never publish the port directly.
 
 **Definition of done**:
 - [ ] App is running and auto-starts on reboot
@@ -633,7 +661,7 @@ Your admin panel is live.
 
 1. Open this one-time link and choose your password (it works once, for 24 hours):
    {setup-link}
-2. After that, log in at: https://{client-domain}/admin  (username: {username})
+2. After that, log in at: {public-url}admin  (username: {username})
 
 Bookmark the login page on your phone -- you can manage everything from here.
 You can change your password any time under "Change Password".

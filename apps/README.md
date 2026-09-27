@@ -17,10 +17,39 @@ as a self-hosted GoHighLevel replacement.
   ```
   The instance lands at `apps/<client-slug>/` with its own `.env` (random secrets,
   mode 0600), `client.db`, port, a single-use admin setup link (`.setup-link`, 0600),
-  `run.sh` (gunicorn on 127.0.0.1) and a systemd unit in `deploy/`. All per-client
+  `run.sh` (gunicorn on 127.0.0.1) and a systemd unit in `deploy/`, and is live at
+  `<portal public URL>/site/<client-slug>/` (see Going live). All per-client
   edits happen in `apps/<client-slug>/app/config.py`.
 - Client instances, `.env` files, databases and `apps/.venv/` are **gitignored**:
   they hold client secrets + customer PII and must never enter this repo's history.
+
+## Going live (public URL with no new infrastructure)
+
+The AI's portal already has a public HTTPS address. It publishes every registered client
+site under it:
+
+```
+https://<portal address>/site/<client-slug>/        -> 127.0.0.1:<port> (the instance)
+https://<client's own domain>/                      -> same instance, once the domain points at the portal
+```
+
+`clone_client.sh` ends by running `tools/client_sites.py go-live`, which starts the instance
+(`run.sh`, gunicorn on 127.0.0.1), registers it in `~/.client-sites.json` (the portal re-reads
+it on change, no restart), writes `CLIENT_PUBLIC_BASE_URL` into the instance `.env`, checks the
+home page through the portal, and prints `PUBLIC URL: ...`. Set `PORTAL_PUBLIC_URL` (env or
+`~/.env`) before cloning so links carry the real address. `CLIENT_GO_LIVE=0` skips it.
+
+- The app is prefix-aware: behind `/site/<slug>/` the portal sends `X-Forwarded-Prefix`
+  (trusted from loopback only), so `url_for`, static files, redirects and config links carry
+  the prefix, and the session cookie is scoped to `/site/<slug>/`.
+- `/admin` is reachable publicly and protected by the instance's own login. The portal's
+  access code is never required or forwarded to a client site.
+- `tools/watchdog.sh` runs `client_sites.py ensure` every minute: registered sites that are
+  down are started again (reboot, crash).
+- Custom domain (human step): DNS for the domain -> the portal's address, plus a fleet TLS
+  proxy entry forwarding it to the portal; then `client_sites.py domain <slug> add <domain>`,
+  set `CLIENT_PUBLIC_BASE_URL='https://<domain>'`, restart the site.
+- `client_sites.py list | start | stop | verify | url | unregister` manage the rest.
 
 ## Regression test
 

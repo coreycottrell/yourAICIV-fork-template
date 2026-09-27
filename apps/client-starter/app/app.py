@@ -67,6 +67,24 @@ class TrustedProxyFix:
 
 app.wsgi_app = TrustedProxyFix(app.wsgi_app)
 
+
+# ── Path-prefix hosting (e.g. https://<portal>/site/<slug>/) ────────────
+# The AiCIV's portal publishes this instance under /site/<slug>/ and sends
+# X-Forwarded-Prefix, which ProxyFix turns into SCRIPT_NAME, so url_for()
+# and redirects already carry the prefix. The session cookie must follow the
+# same prefix: several client sites can share one host, and a cookie on "/"
+# would be sent to (and overwritten by) every one of them. On the client's
+# own domain the prefix is empty and the cookie path is "/" as before.
+from flask.sessions import SecureCookieSessionInterface  # noqa: E402
+
+
+class PrefixAwareSessionInterface(SecureCookieSessionInterface):
+    def get_cookie_path(self, app):
+        return (request.script_root or "") + "/"
+
+
+app.session_interface = PrefixAwareSessionInterface()
+
 app.secret_key = cfg.CLIENT_CONFIG["secret_key"]
 app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024   # 16 MB upload limit
 
@@ -755,6 +773,17 @@ SAFE_ATTRS = {
     'th': {'colspan', 'rowspan'},
 }
 SAFE_URL_SCHEMES = {'http', 'https', 'mailto'}
+
+
+@app.template_global('site_path')
+def site_path(url):
+    """Config-driven link ("/contact", "https://...", "#faq") -> href.
+    Root-relative paths get the hosting prefix (request.script_root), so
+    links written for the client's own domain also work under /site/<slug>/."""
+    url = (url or "").strip()
+    if url.startswith("/") and not url.startswith("//"):
+        return (request.script_root or "") + url
+    return url
 
 
 @app.template_filter('sanitize')

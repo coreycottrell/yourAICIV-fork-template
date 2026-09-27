@@ -14,7 +14,7 @@
         <h1>{{ hero.heading or cfg.business_name }}</h1>
         <p class="tagline">{{ hero.subheading or cfg.tagline }}</p>
         {% if hero.cta_text %}
-        <a href="{{ hero.cta_url or url_for('contact') }}" class="btn btn-primary btn-lg">
+        <a href="{{ site_path(hero.cta_url) if hero.cta_url else url_for('contact') }}" class="btn btn-primary btn-lg">
             {{ hero.cta_text }}
         </a>
         {% endif %}
@@ -69,7 +69,7 @@
             </p>
             {% endif %}
             {% if section.cta_text %}
-            <a href="{{ section.cta_url or url_for('contact') }}" class="btn btn-primary btn-lg">
+            <a href="{{ site_path(section.cta_url) if section.cta_url else url_for('contact') }}" class="btn btn-primary btn-lg">
                 {{ section.cta_text }}
             </a>
             {% endif %}

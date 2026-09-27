@@ -59,7 +59,9 @@ def main(argv=None) -> int:
         shutil.copytree(SCAFFOLD, apps / "client-starter",
                         ignore=shutil.ignore_patterns("__pycache__", ".env", ".setup-link", "logs",
                                                       "client.db*"))
-        env = {**os.environ, "PATH": f"{Path(py).parent}:{os.environ.get('PATH', '')}"}
+        env = {**os.environ, "PATH": f"{Path(py).parent}:{os.environ.get('PATH', '')}",
+               "CLIENT_GO_LIVE": "0"}  # never start or register the throwaway instance
+        env.pop("PORTAL_PUBLIC_URL", None)
         r = subprocess.run(["bash", str(apps / "client-starter" / "clone_client.sh"), SLUG, "5190"],
                            cwd=apps, env=env, capture_output=True, text=True)
         if r.returncode != 0:

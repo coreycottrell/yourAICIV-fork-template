@@ -52,7 +52,7 @@
                 <a href="{{ url_for('index') }}">Home</a>
                 {% if cfg.site.nav_links %}
                     {% for link in cfg.site.nav_links %}
-                    <a href="{{ link.url }}">{{ link.label }}</a>
+                    <a href="{{ site_path(link.url) }}">{{ link.label }}</a>
                     {% endfor %}
                 {% else %}
                     {# Auto-generate from enabled modules #}
@@ -95,7 +95,7 @@
             {% if cfg.site.footer.links %}
             <div class="footer-links">
                 {% for link in cfg.site.footer.links %}
-                <a href="{{ link.url }}">{{ link.label }}</a>
+                <a href="{{ site_path(link.url) }}">{{ link.label }}</a>
                 {% endfor %}
             </div>
             {% endif %}

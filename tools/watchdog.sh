@@ -9,7 +9,9 @@ set -euo pipefail
 # ── Configuration ────────────────────────────────────────────────────
 SESSION_NAME="$(cat /home/aiciv/civ/.current_session 2>/dev/null || echo "${CIV_NAME:-aiciv}-primary")"
 CLAUDE_PROJECT_DIR="${CLAUDE_PROJECT_DIR:-/home/aiciv/civ}"
-PORTAL_DIR="/home/aiciv/purebrain_portal"
+# The running portal records its install dir in ~/.portal_dir.
+PORTAL_DIR="$(head -1 /home/aiciv/.portal_dir 2>/dev/null || true)"
+PORTAL_DIR="${PORTAL_DIR:-/home/aiciv/purebrain_portal}"
 CHECK_INTERVAL=60
 LOG_MAX_LINES=5000
 LOG_KEEP_LINES=1000
@@ -94,7 +96,7 @@ portal_check() {
 
     # Process alive but not responding? Kill hung process
     local pid
-    pid=$(pgrep -f "node.*server" 2>/dev/null | head -1) || true
+    pid=$(pgrep -f "portal_server.py|node.*server" 2>/dev/null | head -1) || true
     if [[ -n "$pid" ]]; then
         log "Portal process alive (PID $pid) but health check failed — killing"
         kill "$pid" 2>/dev/null || true
@@ -110,7 +112,11 @@ portal_check() {
     log "Restarting portal from ${PORTAL_DIR}"
     if [[ -d "$PORTAL_DIR" ]]; then
         cd "$PORTAL_DIR"
-        nohup node server.js >> /home/aiciv/civ/logs/portal.log 2>&1 &
+        if [[ -f "$PORTAL_DIR/start.sh" ]]; then   # Python portal (portal_server.py)
+            nohup bash "$PORTAL_DIR/start.sh" >> /home/aiciv/civ/logs/portal.log 2>&1 &
+        else
+            nohup node server.js >> /home/aiciv/civ/logs/portal.log 2>&1 &
+        fi
         cd - >/dev/null
         sleep 2
         if curl -sf --max-time 2 http://localhost:8097/health >/dev/null 2>&1; then
@@ -194,6 +200,22 @@ claude_check() {
     # NEVER restart Claude — alert only
 }
 
+# Client business sites (apps/<slug>, published at <portal>/site/<slug>/).
+# Registered by tools/client_sites.py go-live; restarted here if down.
+CLIENT_SITES_DOWN=0
+client_sites_check() {
+    local tool="${CLAUDE_PROJECT_DIR}/tools/client_sites.py"
+    [[ -f "$tool" ]] || return 0
+    CLIENT_SITES_DOWN=$(python3 "$tool" list 2>/dev/null | grep -c " DOWN " || true)
+    (( CLIENT_SITES_DOWN > 0 )) || return 0
+    if ! track_restart "client-sites"; then
+        return
+    fi
+    log "Client sites down: ${CLIENT_SITES_DOWN} -- starting"
+    CLIENT_VENV="${CLAUDE_PROJECT_DIR}/apps/.venv" python3 "$tool" ensure >> "$LOG" 2>&1 || \
+        log "Client sites: some did not start (see apps/<slug>/logs/app.log)"
+}
+
 # ── Status Output ────────────────────────────────────────────────────
 write_status_json() {
     cat > /tmp/watchdog-status.json <<EOJSON
@@ -204,6 +226,7 @@ write_status_json() {
   "portal_healthy": ${PORTAL_HEALTHY},
   "telegram_alive": ${TELEGRAM_ALIVE},
   "tmux_alive": ${TMUX_ALIVE},
+  "client_sites_down": ${CLIENT_SITES_DOWN},
   "session_name": "${SESSION_NAME}",
   "pid": $$
 }
@@ -222,6 +245,7 @@ while true; do
     telegram_check
     tmux_check
     claude_check
+    client_sites_check
     write_status_json
     sleep "$CHECK_INTERVAL"
 done

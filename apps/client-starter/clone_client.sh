@@ -17,18 +17,20 @@
 #   5. Issues a single-use admin set-password link to <instance>/.setup-link
 #      (0600). No admin password is generated, stored, printed or sent.
 #   6. Assigns its own port (default: auto-assign starting at 5100)
-#   7. Renders run.sh / systemd start options and PRINTS manual deploy steps
-#      (does NOT modify live infra)
+#   7. GOES LIVE through this AI's portal (tools/client_sites.py go-live):
+#      starts the instance on 127.0.0.1:<port>, registers it, and checks it
+#      through the portal. Public URL: <portal public URL>/site/<slug>/
+#      Skip with CLIENT_GO_LIVE=0 (then run the go-live command it prints).
 #
 # Run it with the shared venv FIRST on PATH (python3 needs the app deps):
 #   PATH="$CIV_ROOT/apps/.venv/bin:$PATH" ./clone_client.sh <slug> [port]
+# Set PORTAL_PUBLIC_URL (env or ~/.env) so links carry the public address.
 #
 # HARD RULES:
-#   - Does NOT modify reverse_proxy.py
-#   - Does NOT modify start_all.sh
-#   - Does NOT modify cloudflared config
-#   - Does NOT modify DNS
-#   - PRINTS the exact manual steps for a human to apply
+#   - Touches nothing outside this AI's own files: no DNS, no fleet proxy,
+#     no tunnel config. The portal serves /site/<slug>/ from the registry.
+#   - The client's OWN domain is a human step (DNS + fleet proxy); it is
+#     PRINTED at the end, never applied.
 # ============================================================
 set -euo pipefail
 umask 077            # everything this script creates is private to its owner
@@ -60,6 +62,7 @@ if ! echo "$CLIENT_SLUG" | grep -qE '^[a-z0-9][a-z0-9-]*[a-z0-9]$'; then
 fi
 
 CLIENT_DIR="$APPS_DIR/$CLIENT_SLUG"
+SITES_TOOL="$(dirname "$APPS_DIR")/tools/client_sites.py"
 
 # Check if directory already exists
 if [ -d "$CLIENT_DIR" ]; then
@@ -124,7 +127,7 @@ echo ""
 
 # ── Step 1: Copy scaffold ──────────────────────────────────────────────
 
-echo "[1/5] Copying scaffold template..."
+echo "[1/6] Copying scaffold template..."
 cp -r "$SCRIPT_DIR" "$CLIENT_DIR"
 
 # Remove pycache, any existing db/secrets/logs that leaked into the scaffold
@@ -150,7 +153,7 @@ echo "   Done. Files copied to $CLIENT_DIR"
 
 # ── Step 2: Generate config from template ──────────────────────────────
 
-echo "[2/5] Generating client-specific config..."
+echo "[2/6] Generating client-specific config..."
 
 # Generate a random secret key
 SECRET_KEY=$(python3 -c "import secrets; print(secrets.token_hex(32))")
@@ -179,7 +182,7 @@ sed -i \
 
 # ── Step 3: Create .env with secrets ───────────────────────────────────
 
-echo "[3/5] Writing secrets to .env..."
+echo "[3/6] Writing secrets to .env..."
 
 # Values are single-quoted so the file is safe for python-dotenv, systemd
 # EnvironmentFile= and `set -a; . .env` alike. No admin password is written:
@@ -221,7 +224,7 @@ echo "   Done. Config set for '$DISPLAY_NAME' on port $PORT"
 
 # ── Step 4: Initialize fresh database ─────────────────────────────────
 
-echo "[4/5] Creating fresh database..."
+echo "[4/6] Creating fresh database..."
 cd "$CLIENT_DIR/app"
 python3 -c "
 import sqlite3, os
@@ -238,9 +241,21 @@ cd "$APPS_DIR"
 
 echo "   Done."
 
+# Public address of this site through the portal (known if PORTAL_PUBLIC_URL
+# is set). Written before the setup link so every absolute link (setup link,
+# Stripe return URLs, unsubscribe, magic links) carries it.
+SITE_URL=""
+if [ -f "$SITES_TOOL" ]; then
+    SITE_URL="$(python3 "$SITES_TOOL" url "$CLIENT_SLUG" 2>/dev/null || true)"
+fi
+if [ -n "$SITE_URL" ]; then
+    printf "CLIENT_PUBLIC_BASE_URL='%s'\n" "${SITE_URL%/}" >> "$CLIENT_DIR/.env"
+    echo "   Public URL: $SITE_URL"
+fi
+
 # ── Step 5: One-time admin setup link + start files ───────────────────
 
-echo "[5/5] Issuing one-time admin setup link and start files..."
+echo "[5/6] Issuing one-time admin setup link and start files..."
 ( cd "$CLIENT_DIR/app" && python3 manage.py issue-setup-link --port "$PORT" )
 
 RUN_USER="client-$CLIENT_SLUG"
@@ -269,34 +284,54 @@ echo ""
 echo "  Secrets are stored in: $CLIENT_DIR/.env (mode 0600)"
 echo "  (Never commit, print, or copy .env; the instance .gitignore excludes it)"
 echo ""
+# ── Step 6: Go live through the portal ────────────────────────────────
+
+GO_LIVE_CMD="python3 $SITES_TOOL go-live $CLIENT_SLUG --port $PORT --dir $CLIENT_DIR"
+LIVE_RC=skipped
+if [ "${CLIENT_GO_LIVE:-1}" != "0" ] && [ -f "$SITES_TOOL" ]; then
+    echo "[6/6] Going live through the portal..."
+    set +e
+    CLIENT_VENV="$VENV_DIR" python3 "$SITES_TOOL" go-live "$CLIENT_SLUG" --port "$PORT" --dir "$CLIENT_DIR"
+    LIVE_RC=$?
+    set -e
+    echo ""
+fi
+
 echo "================================================================"
-echo "  MANUAL DEPLOY STEPS (do NOT skip these)"
+echo "  GO-LIVE"
 echo "================================================================"
 echo ""
-echo "  1. REVIEW $CLIENT_DIR/.env and fill in email / Stripe / Telegram keys"
-echo "     as needed (edit in place; never echo the values)."
+case "$LIVE_RC" in
+  0) echo "  LIVE. Public URL: ${SITE_URL:-<portal public address>/site/$CLIENT_SLUG/}"
+     echo "  Admin: ${SITE_URL:-<portal public address>/site/$CLIENT_SLUG/}admin/login" ;;
+  3) echo "  Running on 127.0.0.1:$PORT and registered, but the portal did not"
+     echo "  serve it (is the portal running and up to date?). Re-check:"
+     echo "    python3 $SITES_TOOL verify $CLIENT_SLUG" ;;
+  skipped) echo "  Not started (CLIENT_GO_LIVE=0 or tools/client_sites.py missing)."
+     echo "  To go live:  $GO_LIVE_CMD" ;;
+  *) echo "  Start FAILED (see $CLIENT_DIR/logs/app.log). Retry:"
+     echo "    $GO_LIVE_CMD" ;;
+esac
 echo ""
-echo "  2. START (production = gunicorn on 127.0.0.1, never the dev server):"
-echo "     a) systemd available (preferred; isolates the instance as its own"
-echo "        unprivileged user $RUN_USER):"
-echo "          see the header of $CLIENT_DIR/deploy/client-$CLIENT_SLUG.service"
-echo "     b) no systemd (e.g. inside a container):"
-echo "          (cd $CLIENT_DIR && nohup ./run.sh >/dev/null 2>&1 &)"
-echo "          logs: $CLIENT_DIR/logs/app.log (0600); stop: kill \$(cat $CLIENT_DIR/logs/gunicorn.pid)"
-echo "        Add the same line to start_all.sh so it restarts on reboot."
+echo "  It stays up: tools/watchdog.sh runs 'client_sites.py ensure' every"
+echo "  minute and restarts any registered site that is down."
+echo "  Status: python3 $SITES_TOOL list"
+echo "  (Host with systemd instead? See the header of"
+echo "   $CLIENT_DIR/deploy/client-$CLIENT_SLUG.service; still register it.)"
 echo ""
-echo "  3. ADD TO reverse_proxy.py (so it's reachable via domain):"
-echo "     Add route entry for '/$CLIENT_SLUG' -> localhost:$PORT"
-echo "     Example in ROUTES dict:"
-echo "       '$CLIENT_SLUG': {'port': $PORT, 'strip_prefix': True},"
-echo ""
-echo "  4. OPTIONAL: Add to cloudflared config (if using Cloudflare Tunnel):"
-echo "     Add ingress rule for $CLIENT_SLUG subdomain or path."
-echo ""
-echo "  5. OPTIONAL: Set up DNS for custom domain:"
-echo "     CNAME record pointing to your tunnel or server IP."
+echo "  NEXT (optional): fill $CLIENT_DIR/.env with Stripe / email /"
+echo "  Telegram keys (edit in place; never echo the values), then:"
+echo "    python3 $SITES_TOOL stop $CLIENT_SLUG && python3 $SITES_TOOL start $CLIENT_SLUG"
 echo ""
 echo "================================================================"
-echo "  DO NOT modify these files automatically -- a human should"
-echo "  review and apply each step deliberately."
+echo "  CLIENT'S OWN DOMAIN (human step; nothing here applies it)"
+echo "================================================================"
+echo ""
+echo "  1. DNS (client's registrar): point the domain at the SAME address"
+echo "     as this AI's portal (CNAME to the portal host name, or its A record)."
+echo "  2. Fleet TLS proxy (operator): add a site block for the domain that"
+echo "     forwards to this AI's portal, exactly like the portal's own block."
+echo "  3. Here:  python3 $SITES_TOOL domain $CLIENT_SLUG add <domain>"
+echo "     then set CLIENT_PUBLIC_BASE_URL='https://<domain>' in"
+echo "     $CLIENT_DIR/.env and restart the site (stop + start)."
 echo "================================================================"
