@@ -308,7 +308,8 @@ def pretooluse(inp: dict, st: dict) -> None:
 
 
 def partner_kick() -> None:
-    """Report trial milestones to the reseller partner (tools/partner_notify.py). Never output, never raise."""
+    """Report trial milestones to the reseller partner (tools/partner_notify.py). Off by default
+    (reseller notifications come from True Bearing): a silent no-op. Never output, never raise."""
     try:
         import partner_notify  # noqa: E402  (tools/ is on sys.path)
         partner_notify.kick(ROOT)
@@ -324,7 +325,7 @@ def main() -> int:
         inp = {}
     event = str(inp.get("hook_event_name") or (sys.argv[1] if len(sys.argv) > 1 else ""))
     if event in ("SessionStart", "UserPromptSubmit"):
-        partner_kick()  # trial day 6 / expired / converted reach the partner (silent, background)
+        partner_kick()  # only when partner email is switched on (off by default); silent, background
     rec = trial_state.load(ROOT)
     if rec is None:
         return 0  # not a trial: no gating anywhere

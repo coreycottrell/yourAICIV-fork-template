@@ -8,7 +8,9 @@ clone_client.sh, then runs tools/delivery_engine_checks.py inside it
 port is bound, nothing leaves the box). The temp dir is deleted afterwards.
 
 Coverage: the security hardening checks, the partner copies of business alerts
-(PARTNER: lead / order / booking / affiliate each email the reseller partner once;
+(PARTNER: the shipped config/partner.json gives owner-only alerts (no partner copy by default;
+reseller notifications come from True Bearing); switched on explicitly, lead / order / booking /
+affiliate each email the reseller partner once;
 no email provider -> queued to logs/partner-outbox.jsonl and sent by the AiCIV's
 tools/partner_notify.py flush through a loopback AgentMail stub), plus the automation checks (AUTO):
 a contact form fires a Telegram lead alert and a welcome-workflow enrollment;

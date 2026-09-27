@@ -205,9 +205,10 @@ def main():
     # MEMORY INJECTION: Recent agent learnings and handoffs
     inject_recent_memories()
 
-    # PARTNER NOTIFICATIONS (skill: partner-notifications): report anything the disk
-    # shows happened (born, first conversation, WOW shipped, trial milestones) to the
-    # reseller partner, in the background, once per event. Say so if email is missing.
+    # PARTNER NOTIFICATIONS (skill: partner-notifications): OFF by default (reseller
+    # notifications come from True Bearing); both calls are silent no-ops then. When an
+    # operator switches it on, report what the disk shows happened to the partner in the
+    # background, once per event, and say so if email is missing.
     try:
         sys.path.insert(0, str(Path(PROJECT_DIR) / "tools"))
         import partner_notify

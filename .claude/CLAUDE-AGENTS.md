@@ -176,7 +176,7 @@ Skills are reusable patterns stored in `.claude/skills/`. Key skills:
 | Security Analysis | `.claude/skills/security-analysis/SKILL.md` | Static code review |
 | North Star | `.claude/skills/north-star/SKILL.md` | Ultimate mission reference |
 | Client Onboarding | `.claude/skills/client-onboarding/SKILL.md` | Stand up a client's business system (funnel, CRM, dashboard, store, Stripe) from `apps/client-starter/` |
-| Partner Notifications | `.claude/skills/partner-notifications/SKILL.md` | Email your reseller partner once per event (born, first conversation, WOW shipped, trial milestones, health, business alerts) via `tools/partner_notify.py` |
+| Partner Notifications | `.claude/skills/partner-notifications/SKILL.md` | OFF by default: reseller notifications come from True Bearing. Dormant AiCIV-side feed (`tools/partner_notify.py`) an operator can switch on per civ; nothing to do while `notify_emails` is empty |
 
 **Full registry**: `memories/skills/registry.json`
 

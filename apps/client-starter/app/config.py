@@ -58,8 +58,10 @@ _SECRET_KEY = _require_secret_key()
 # ── Reseller partner (who else hears about this client's business) ───────
 # The AiCIV's partner profile (<civ>/config/partner.json, "notify_emails") is
 # the source; PARTNER_NOTIFY_EMAILS (env / .env, comma separated) wins when
-# set. Every owner alert (lead / order / booking / affiliate application) is
-# also emailed to these addresses. Empty = the partner is not notified.
+# set. Empty is the DEFAULT: business alerts go to the client owner only, and
+# reseller notifications come from True Bearing (Corey 2026-09-27). Only when
+# an operator sets addresses is each owner alert (lead / order / booking /
+# affiliate application) also emailed to them.
 def _partner_profile():
     import json as _json
     import re as _re
@@ -138,8 +140,9 @@ CLIENT_CONFIG = {
     "telegram_bot_token": os.environ.get("TELEGRAM_BOT_TOKEN", ""),
     "telegram_chat_id": os.environ.get("TELEGRAM_CHAT_ID", ""),
 
-    # Reseller partner: gets an email copy of every owner alert above (see
-    # _partner_profile). Sent through this app's email provider (Resend);
+    # Reseller partner copy: OFF by default (empty list; owner-only alerts).
+    # When an operator sets addresses (see _partner_profile), every owner alert
+    # above is also emailed to them through this app's email provider (Resend);
     # when email is not configured or the send fails, the alert is queued to
     # logs/partner-outbox.jsonl and the AiCIV sends it from its own inbox
     # (tools/partner_notify.py flush). Never slows or fails the request.

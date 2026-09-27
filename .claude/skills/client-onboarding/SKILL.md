@@ -524,12 +524,10 @@ attempt is logged as `[TELEGRAM] <event> alert sent` or `... FAILED: <reason>`):
 | New affiliate application | "New affiliate application: {name} ({email}). Review it under Admin > Affiliates." |
 | Unread message threshold | Not built in. If the client wants a daily digest, schedule it yourself (AgentCal) from `read_untrusted.py --kind messages` counts |
 
-**Reseller partner copy** (built in, no setup): each of the four alerts above is also emailed to the partner
-addresses in `config/partner.json` `notify_emails` (override: `PARTNER_NOTIFY_EMAILS` in the instance `.env`),
-subject `[<brand>] <business> - new lead|new order|new booking|new affiliate application`. It goes
-through the instance's Resend setup (`RESEND_API_KEY` + `EMAIL_FROM`, Step 2.5) on its own thread. Before
-Resend is configured, or if a send fails, the alert is queued to `apps/<slug>/logs/partner-outbox.jsonl` and your watchdog sends it from your own AgentMail inbox
-(`tools/partner_notify.py flush`). Logged as `[PARTNER] ...`. Skill: `partner-notifications`.
+**These alerts go to the client owner only.** There is no reseller copy by default: reseller notifications come
+from True Bearing, and `config/partner.json` ships with an empty `notify_emails`. Nothing to set up and nothing to
+report. (An operator can switch a partner copy on per instance with `PARTNER_NOTIFY_EMAILS` in the instance `.env`;
+skill `partner-notifications`. Do not do this yourself.)
 
 **Definition of done**:
 - [ ] Client receives a test Telegram message from their bot

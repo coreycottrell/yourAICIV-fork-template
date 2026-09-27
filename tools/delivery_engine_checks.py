@@ -700,11 +700,24 @@ while not to("rita@example.org") and time.time() < end:
 check("AUTO in-process runner sent the welcome within seconds (woken on enrollment)",
       started and len(to("rita@example.org")) == 1)
 
-# ── PARTNER: every owner alert is copied to the reseller partner (ws8) ──
+# ── PARTNER: owner-only alerts by default; a partner copy only when switched on (ws8) ──
+# Corey 2026-09-27: reseller notifications come from True Bearing, so the shipped
+# config/partner.json has no addresses and business alerts go to the client owner only.
 import http.server
 PARTNER = "cryptoconsultants1@gmail.com"
 check("PARTNER no partner configured by default in a bare instance (no civ partner.json)",
       cfg.CLIENT_CONFIG.get("partner_notify_emails") == [])
+_tpl_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_saved_civ_root = os.environ.get("CIV_ROOT")
+os.environ["CIV_ROOT"] = _tpl_root
+_shipped = cfg._partner_profile()
+if _saved_civ_root is None:
+    os.environ.pop("CIV_ROOT", None)
+else:
+    os.environ["CIV_ROOT"] = _saved_civ_root
+check("PARTNER shipped config/partner.json: no partner copy (owner-only alerts by default)",
+      _shipped == ("yourAICIV", []), repr(_shipped))
+# From here on the partner copy is switched on explicitly (the dormant, operator-enabled path).
 cfg.CLIENT_CONFIG["partner_notify_emails"] = [PARTNER]
 cfg.CLIENT_CONFIG["partner_brand"] = "yourAICIV"
 cfg.CLIENT_CONFIG["resend_api_key"] = "re_test_placeholder"
@@ -802,7 +815,7 @@ threading.Thread(target=srv.serve_forever, daemon=True).start()
 civ_root = os.path.dirname(os.path.dirname(os.path.dirname(os.getcwd())))
 tools_dir = os.path.dirname(os.path.abspath(__file__))
 fenv = {k: v for k, v in os.environ.items() if not k.startswith(("AGENTMAIL_", "PARTNER_NOTIFY"))}
-fenv.update({"AGENTMAIL_API_KEY": "am_test_dummy", "AGENTMAIL_INBOX": "keel@agentmail.to",
+fenv.update({"PARTNER_NOTIFY_EMAILS": PARTNER, "AGENTMAIL_API_KEY": "am_test_dummy", "AGENTMAIL_INBOX": "keel@agentmail.to",
              "AGENTMAIL_API_BASE": f"http://127.0.0.1:{srv.server_port}", "AGENTMAIL_ENV_FILE": "/nonexistent"})
 queued = len(outbox_lines())
 time.sleep(3.2)                             # the slow sender finished; nothing else in flight

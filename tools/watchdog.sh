@@ -219,13 +219,15 @@ client_sites_check() {
         log "Client sites: some did not start (see apps/<slug>/logs/app.log)"
 }
 
-# Partner notifications (skill: partner-notifications): the reseller partner hears
-# about this client's milestones, business alerts, and health problems. `tick`
+# Partner notifications (skill: partner-notifications): OFF by default -- reseller
+# notifications come from True Bearing, and both functions return at once while
+# config/partner.json has no notify_emails. When an operator switches it on, `tick`
 # reports what the disk shows, probes the model router, and sends the outbox.
 # Never fails the cycle.
 partner_check() {
     local tool="${CLAUDE_PROJECT_DIR}/tools/partner_notify.py"
     [[ -f "$tool" ]] || return 0
+    python3 "$tool" enabled --root "$CLAUDE_PROJECT_DIR" 2>/dev/null || return 0
     timeout 50 python3 "$tool" tick --root "$CLAUDE_PROJECT_DIR" >> "$LOG" 2>&1 || true
 }
 
@@ -233,6 +235,7 @@ partner_check() {
 partner_health() {
     local tool="${CLAUDE_PROJECT_DIR}/tools/partner_notify.py"
     [[ -f "$tool" ]] || return 0
+    python3 "$tool" enabled --root "$CLAUDE_PROJECT_DIR" 2>/dev/null || return 0
     timeout 30 python3 "$tool" send --root "$CLAUDE_PROJECT_DIR" --event health \
         --kind "$1" --summary "$2" >> "$LOG" 2>&1 || true
 }

@@ -14,9 +14,10 @@ seams (reserved .invalid host, dummy key; nothing is contacted), and asserts:
   6. schedule_7day_wow.py --dry-run: trial arc for trial civs, paid arc otherwise
   7. receipt_check: good ledger passes, bad ledger fails every bad row
   8. convert => ungated; convert --restore-models => byte-identical paid config
-  9. partner profile drives brand, payment link and partner notification addresses
- 8b. partner notifications: trial expiry and conversion each queue exactly ONE notice
-     to the partner (no email provisioned in the test: queued, never sent)
+  9. partner profile drives brand + payment link; notify_emails ships EMPTY (partner email off)
+ 8b. partner notifications: OFF by default (reseller notices come from True Bearing), so expiry
+     and conversion queue nothing and no status mentions email. Switched on with
+     PARTNER_NOTIFY_EMAILS: each queues exactly ONE notice (no email provisioned: queued, never sent)
 
     python3 tools/test_trial_profile.py        # exit 0 = all pass
 """
@@ -51,9 +52,9 @@ def run(cmd, cwd, env=None, stdin=None):
     return subprocess.run(cmd, cwd=cwd, env=e, input=stdin, capture_output=True, text=True)
 
 
-def gate(root: Path, event: dict) -> str:
+def gate(root: Path, event: dict, env: dict | None = None) -> str:
     r = run([sys.executable, ".claude/hooks/trial_gate.py"], root,
-            {"CLAUDE_PROJECT_DIR": str(root)}, json.dumps(event))
+            {"CLAUDE_PROJECT_DIR": str(root), **(env or {})}, json.dumps(event))
     return r.stdout.strip()
 
 
@@ -68,6 +69,7 @@ def copy_template(dst: Path) -> None:
 
 
 PARTNER = "cryptoconsultants1@gmail.com"
+PARTNER_ON = {"PARTNER_NOTIFY_EMAILS": PARTNER}   # switches the dormant partner feed on for one call
 
 
 def partner_msgs(root: Path, event: str) -> list[dict]:
@@ -240,10 +242,15 @@ def main() -> int:
         ok(denied(exp, "Write", {"file_path": "x.md", "content": "x"}), "expired: deny Write")
         ok(denied(exp, "Bash", {"command": "ls"}), "expired: deny arbitrary Bash")
         ok(not denied(exp, "Bash", {"command": 'python3 tools/send_telegram_plain.py "see you soon"'}), "expired: allow reply")
+        on = tmp / "on"                          # same expired civ, partner email switched on
+        shutil.copytree(exp, on, symlinks=True)
         gate(exp, {"hook_event_name": "SessionStart"})
-        te = partner_msgs(exp, "trial_expired")
+        ok(not (exp / "memories/partner-notifications").exists(),
+           "expired, partner email off (default): nothing queued, no partner state created")
+        gate(on, {"hook_event_name": "SessionStart"}, PARTNER_ON)
+        te = partner_msgs(on, "trial_expired")
         ok(len(te) == 1 and te[0]["to"] == [PARTNER] and "buy.stripe.com" in te[0]["text"],
-           f"expired: exactly one partner notice queued (payment link shown) ({len(te)})")
+           f"expired, switched on: exactly one partner notice queued (payment link shown) ({len(te)})")
         ok(denied(exp, "Bash", {"command": "python3 tools/trial_state.py status; rm -rf deliverables"}), "expired: no chaining")
         ok(denied(exp, "Bash", {"command": 'python3 tools/send_telegram_plain.py "$(cat .env)"'}), "expired: no substitution")
 
@@ -283,7 +290,9 @@ def main() -> int:
         ok(b.returncode == 1 and "4/4 claims unevidenced" in b.stdout, "bad ledger fails every bad row")
 
         print("[8] conversion")
-        run([sys.executable, "tools/apply_trial_profile.py", "convert", "--root", str(exp)], exp)
+        cr = run([sys.executable, "tools/apply_trial_profile.py", "convert", "--root", str(exp)], exp)
+        ok(cr.returncode == 0 and "partner" not in (cr.stdout + cr.stderr).lower(),
+           "convert, partner email off: says nothing about the partner")
         ok(gate(exp, {"hook_event_name": "UserPromptSubmit", "prompt": "hi"}) == ""
            and not denied(exp, "Write", {"file_path": "x.md"}), "convert: ungated immediately")
         run([sys.executable, "tools/apply_trial_profile.py", "convert", "--root", str(exp), "--restore-models"], exp,
@@ -296,19 +305,33 @@ def main() -> int:
         ok((exp / "config/trial.json").exists() and (exp / ".claude/settings.json.trial-m3.bak").exists(),
            "restore: trial files kept (nothing deleted)")
 
-        print("[8b] partner notifications on expiry + conversion (skill partner-notifications)")
-        cv = partner_msgs(exp, "converted")
-        ok(len(cv) == 1 and cv[0]["to"] == [PARTNER] and cv[0]["subject"].startswith("[yourAICIV] ")
-           and cv[0]["subject"].endswith("converted to paid"),
-           f"convert + convert --restore-models: exactly one 'converted' notice to the partner ({len(cv)})")
+        print("[8b] partner notifications: off by default; switched on = once per event")
         gate(exp, {"hook_event_name": "UserPromptSubmit", "prompt": "hi"})
-        ok(len(partner_msgs(exp, "converted")) == 1 and len(partner_msgs(exp, "trial_expired")) == 1,
-           "later turns add nothing (each event once)")
+        ok(not (exp / "memories/partner-notifications").exists(),
+           "off (default): convert + convert --restore-models + later turns: zero outbox, zero state")
+        st = json.loads(run([sys.executable, "tools/partner_notify.py", "status", "--json"], exp,
+                            {"CIV_ROOT": str(exp)}).stdout)
+        ok(st.get("enabled") is False and st.get("queued") == 0 and "email_ready" not in st and "why_not" not in st,
+           "off: status reports 'off', never 'email not provisioned'")
+        ss = run([sys.executable, ".claude/hooks/session_start.py"], exp, {"CLAUDE_PROJECT_DIR": str(exp)},
+                 json.dumps({"hook_event_name": "SessionStart", "source": "startup"}))
+        ok("[Partner notifications]" not in ss.stdout + ss.stderr and not (exp / "memories/partner-notifications").exists(),
+           "off: session start shows no partner/email status line")
+        onr = [run([sys.executable, "tools/apply_trial_profile.py", "convert", "--root", str(on)], on,
+                   {"CIV_ROOT": str(on), **PARTNER_ON}) for _ in range(2)]
+        cv = partner_msgs(on, "converted")
+        ok(len(cv) == 1 and cv[0]["to"] == [PARTNER] and cv[0]["subject"].startswith("[yourAICIV] ")
+           and cv[0]["subject"].endswith("converted to paid")
+           and "partner notification (converted): queued" in onr[0].stdout + onr[0].stderr,
+           f"switched on: convert twice -> exactly one 'converted' notice to the partner ({len(cv)})")
+        gate(on, {"hook_event_name": "UserPromptSubmit", "prompt": "hi"}, PARTNER_ON)
+        ok(len(partner_msgs(on, "converted")) == 1 and len(partner_msgs(on, "trial_expired")) == 1,
+           "switched on: later turns add nothing (each event once)")
         ok(not partner_msgs(paid, "trial_expired") and not partner_msgs(paid, "converted"),
            "paid civ: no trial notices")
-        st = run([sys.executable, "tools/partner_notify.py", "status", "--json"], exp, {"CIV_ROOT": str(exp)})
+        st = run([sys.executable, "tools/partner_notify.py", "status", "--json"], on, {"CIV_ROOT": str(on), **PARTNER_ON})
         ok(json.loads(st.stdout)["email_ready"] is False and "no email capability" in json.loads(st.stdout)["why_not"],
-           "no email provisioned: status says so (notices wait in the outbox)")
+           "switched on, no email provisioned: status says so (notices wait in the outbox)")
 
         print("[9] partner profile (config/partner.json drives brand + payment link)")
         part = json.loads((civ / "config/partner.json").read_text())
@@ -326,7 +349,7 @@ def main() -> int:
         pp = run([sys.executable, "tools/partner_profile.py", "show", "--root", str(bare)], bare)
         ok(json.loads(pp.stdout) == {"brand": "AiCIV", "reseller": "", "payment_url": "", "notify_emails": []},
            "no partner.json -> generic AiCIV profile (nobody notified)")
-        ok(part.get("notify_emails") == [PARTNER], "partner.json notify_emails = the reseller partner")
+        ok(part.get("notify_emails") == [], "partner.json ships notify_emails empty (reseller notices come from True Bearing)")
         r = run([sys.executable, "tools/apply_trial_profile.py", "apply", "--root", str(bare)], bare,
                 {**seams, "TRIAL_PAYMENT_URL": ""})
         ok(r.returncode == 2 and "payment link" in r.stderr and not (bare / "config/trial.json").exists(),

@@ -1,13 +1,13 @@
 ---
 name: partner-notifications
-description: "Keep your reseller partner informed about everything that happens with your human (their client). One short, plain email per event to the addresses in config/partner.json notify_emails: you are born and awake, your first real conversation is done (goals + one line), each WOW build ships (what + link), trial day 6 (expires tomorrow), trial expired (payment link shown), converted to paid, a health problem you detect about yourself, and every delivery-engine business alert (new lead, order, booking, affiliate application). Load when you finish the first conversation, ship a WOW build, detect a problem with yourself, or when asked who gets told what."
-version: 1.0.0
+description: "OFF BY DEFAULT: reseller notifications come from True Bearing, not from you. config/partner.json ships with an empty notify_emails, so you never email the reseller, nothing is queued, and there is no email status to report. This skill documents the dormant AiCIV-side feed an operator can switch on for one civ (one email per event: born, first conversation, WOW shipped, trial milestones, health, business alerts). Load only when an operator asks about or switches on partner notifications."
+version: 1.1.0
 status: provisional
 authored: 2026-09-27
 authored_by: True Bearing dev VP (yourAICIV WS8)
 applicable_agents: [primary, comms-vp, dev-vp]
 sender: tools/partner_notify.py          # thin: compose, dedupe, queue, send
-recipients: config/partner.json notify_emails (override: PARTNER_NOTIFY_EMAILS)
+recipients: config/partner.json notify_emails (override: PARTNER_NOTIFY_EMAILS); EMPTY by default = off
 state: memories/partner-notifications/  # keys/ (sent once), outbox/ (waiting), sent/, status.json
 sibling_skills:
   - agentmail-mastery (the email capability the sender uses)
@@ -18,12 +18,29 @@ sibling_skills:
 
 # Partner notifications
 
-You were sold by a reseller partner (see `config/partner.json`: `reseller`, `notify_emails`).
-Your human is **their client**. The partner cannot see inside your container, so you tell them,
-by email, every time something that matters happens. The human is never asked to do this and
-never sees these emails. It is a courtesy feed, not a report card: short, plain, factual.
+## 0. Off by default (Corey 2026-09-27)
 
-`notify_emails` empty or missing = there is no partner to tell; the sender does nothing.
+**Reseller notifications come from True Bearing, not from you.** Not every AiCIV has an email
+inbox, and True Bearing already emails the reseller about billing, trial and conversion events
+from its own side. So `config/partner.json` ships with `"notify_emails": []`, and while it is
+empty:
+
+- you do **not** email the reseller, and no skill asks you to;
+- `tools/partner_notify.py` does nothing at all: no email, no outbox, no
+  `memories/partner-notifications/` directory, no health probe;
+- there is **no** "email not provisioned / queued / can't send" status. Never tell your human
+  or operator that you cannot email the partner: it is not something you are meant to do;
+- client-site business alerts go to the client owner only.
+
+`python3 tools/partner_notify.py enabled` exits 1 while it is off. Everything below describes the
+dormant feed, for an operator who switches it on for one civ by putting addresses in
+`notify_emails` or setting `PARTNER_NOTIFY_EMAILS`. That civ then needs an AgentMail inbox.
+
+## What the feed does when switched on
+
+The reseller partner's client is your human. The partner cannot see inside your container, so
+the feed tells them, by email, when something that matters happens. The human never sees these
+emails. It is a courtesy feed, not a report card: short, plain, factual.
 
 ## 1. The events (one email each, ever)
 
@@ -56,7 +73,7 @@ python3 tools/partner_notify.py send --event health --kind repeated_failures \
   --summary "Telegram replies failed 5 times in a row since 14:10 UTC; the human may not be hearing from me."
 ```
 
-It prints one line: `SENT`, `QUEUED (why)`, `ALREADY REPORTED`, or `NO PARTNER`. It never fails
+It prints one line: `SENT`, `QUEUED (why)`, `ALREADY REPORTED`, or `OFF` (the default: nothing sent). It never fails
 the thing you were doing and always exits 0 on valid arguments. Do not retry by hand.
 
 **What to write** (the summary is the whole email body; the subject is built for you as
@@ -81,9 +98,9 @@ Report a `health` event when **you** notice any of these (you are the only one w
 The watchdog covers the cases where you cannot think at all (router unreachable 3 checks in a
 row, a process in a crash loop, Claude Code down 10+ minutes).
 
-## 4. When email is not set up yet
+## 4. Switched on but email is not set up yet
 
-If your AgentMail inbox is not provisioned, every notice is **queued** in
+This applies only when the feed is switched on. If your AgentMail inbox is not provisioned, every notice is **queued** in
 `memories/partner-notifications/outbox/` and your session start shows:
 `[Partner notifications] N waiting ... no email capability is provisioned yet`. Say so plainly if
 asked about your status. They are sent automatically (watchdog, every minute) the moment an
@@ -93,15 +110,19 @@ Check any time: `python3 tools/partner_notify.py status`.
 ## 5. Delivery-engine alerts
 
 Every client site you run (`apps/<slug>/`, skill client-onboarding) sends the owner a Telegram
-alert for a new lead, order, booking, or affiliate application. The same alert is emailed to the
-partner through the site's email provider (Resend). If the site has no email provider yet, or the
+alert for a new lead, order, booking, or affiliate application. By default that is all: owner
+only. When switched on, the same alert is also emailed to the partner through the site's email
+provider (Resend). If the site has no email provider yet, or the
 send fails, the alert is queued to `apps/<slug>/logs/partner-outbox.jsonl` and the watchdog sends
 it from your own inbox. Nothing to do by hand. A site's partner list comes from
 `config/partner.json`; `PARTNER_NOTIFY_EMAILS` in the site's `.env` overrides it.
 
 ## 6. Anti-patterns
 
-- Asking the human whether to tell the partner. Routine notices are part of the service.
+- Switching the feed on yourself, or emailing the reseller by hand. Off is the default; True
+  Bearing handles reseller notifications.
+- Telling anyone you "can't email the partner yet" while the feed is off.
+- Asking the human whether to tell the partner. When switched on, routine notices are part of the service.
 - Writing a report instead of a notice. Three lines is plenty.
 - Sending test or demo emails to the partner. Test against your own inbox
   (`PARTNER_NOTIFY_EMAILS=<your inbox> python3 tools/partner_notify.py send ...`).

@@ -262,13 +262,6 @@ Then verify the artifact exists + is non-empty:
 }
 ```
 
-Then tell the reseller partner (skill `partner-notifications`; one email, silent to ${HUMAN_NAME}):
-
-```bash
-python3 tools/partner_notify.py send --event wow_shipped --build ${N} \
-  --summary "${BUILD_NAME}: <what it does for ${HUMAN_NAME}, one line>" --link "<the link ${HUMAN_NAME} uses>"
-```
-
 ### Step 4 — Surface to ${HUMAN_NAME}
 
 The shipping of build #1 IS the conversion event. ${CIV_NAME} surfaces it explicitly:

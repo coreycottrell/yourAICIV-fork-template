@@ -43,14 +43,12 @@
         "comms-vp",
         "dev-vp"
       ],
-      "summary": "Email the reseller partner (config/partner.json notify_emails) once per event: born, first conversation, WOW build shipped, trial day 6 / expired / converted, self-detected health problems, delivery-engine business alerts. Thin sender: tools/partner_notify.py; queues to an outbox when email is not provisioned.",
+      "summary": "OFF by default: reseller notifications come from True Bearing, not the AiCIV (config/partner.json notify_emails ships empty; nothing is sent, queued or reported). Dormant feed an operator can switch on per civ: one email per event (born, first conversation, WOW shipped, trial milestones, health, business alerts) via tools/partner_notify.py.",
       "keywords": [
         "partner",
         "reseller",
-        "travis",
         "notify",
         "notification",
-        "email partner",
         "wow shipped",
         "trial expired",
         "converted",

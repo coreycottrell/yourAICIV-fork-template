@@ -7,9 +7,13 @@ every partner event through the real entry points: the session start hook, the t
 `apply_trial_profile.py convert`, the watchdog's `tick`, and the AiCIV's own `send`. AgentMail is
 a loopback stub (AGENTMAIL_API_BASE), so the full HTTP send path runs and nothing leaves the box.
 
-Asserts, per event: exactly ONE email to the partner address from config/partner.json
-(cryptoconsultants1@gmail.com), however many parts report it; plus the outbox path when no email
-is provisioned, retry after a failed send, and that no notification ever fails its trigger.
+[0] DEFAULT = OFF (Corey 2026-09-27: reseller notifications come from True Bearing). The shipped
+config/partner.json has no addresses, so every entry point sends nothing, queues nothing, creates
+no state, and shows no "email not provisioned" status -- even with an AgentMail key present.
+
+[1]-[10] the dormant feed switched on (PARTNER_NOTIFY_EMAILS=cryptoconsultants1@gmail.com), per
+event: exactly ONE email to the partner, however many parts report it; plus the outbox path when
+no email is provisioned, retry after a failed send, and that no notification ever fails its trigger.
 
     python3 tools/test_partner_notify.py        # exit 0 = all pass
 """
@@ -113,7 +117,9 @@ def main() -> int:
     base_env.pop("CLAUDE_PROJECT_DIR", None)
     mail = {"AGENTMAIL_API_KEY": "am_test_dummy_not_a_key", "AGENTMAIL_INBOX": "keel@agentmail.to",
             "AGENTMAIL_API_BASE": stub.url, "AGENTMAIL_ENV_FILE": "/nonexistent",
-            "PARTNER_NOTIFY_SYNC": "1", "PARTNER_NOTIFY_KICK_THROTTLE_SECS": "0"}
+            "PARTNER_NOTIFY_SYNC": "1", "PARTNER_NOTIFY_KICK_THROTTLE_SECS": "0",
+            "PARTNER_NOTIFY_EMAILS": PARTNER}          # switched on; [0] clears it (default = off)
+    OFF = {"PARTNER_NOTIFY_EMAILS": ""}
     tmp = Path(tempfile.mkdtemp(prefix="partner-notify-"))
 
     def run(cmd, root: Path, extra=None, stdin=None):
@@ -127,18 +133,65 @@ def main() -> int:
         return run([sys.executable, f".claude/hooks/{name}"], root, extra, json.dumps({"hook_event_name": event}))
 
     try:
+        print("[0] default: partner email OFF (reseller notifications come from True Bearing)")
+        off = birth(tmp / "off")
+        pp = json.loads(run([sys.executable, "tools/partner_profile.py", "show"], off, OFF).stdout)
+        ok(pp["notify_emails"] == [], "shipped config/partner.json: notify_emails empty")
+        ok(run([sys.executable, "tools/partner_notify.py", "enabled"], off, OFF).returncode == 1,
+           "`enabled` exits 1 (off)")
+        (off / "memories/identity/.evolution-done").write_text("done\n")
+        (off / "memories/identity/build-1-ship-evidence").mkdir()
+        (off / "memories/identity/build-1-ship-evidence/receipt.txt").write_text("build_n=1\nbuild_name=x\n")
+        (off / "apps/sams-bakery/logs").mkdir(parents=True)
+        outs = []
+        for extra in (OFF, {**OFF, "AGENTMAIL_API_KEY": ""}):      # with and without an AgentMail key
+            env = {**extra, "PARTNER_NOTIFY_GRACE_SECS": "0", "PARTNER_HEALTH_PROBE_SECS": "0",
+                   "ANTHROPIC_BASE_URL": f"http://127.0.0.1:{closed_port()}/anthropic"}
+            outs.append(hook(off, "session_start.py", "SessionStart", env))
+            outs.append(hook(off, "trial_gate.py", "SessionStart", env))
+            outs.append(send(off, "--event", "wow_shipped", "--build", "1", "--summary", "x", extra=env))
+            outs.append(send(off, "--event", "health", "--kind", "disk_full", "--summary", "x", extra=env))
+            for cmd in ("sweep", "tick", "flush"):
+                for _ in range(3):
+                    outs.append(run([sys.executable, "tools/partner_notify.py", cmd], off, env))
+        ok(all(o.returncode == 0 for o in outs), "every entry point exits 0")
+        ok(not stub.posts, "zero emails sent (hooks, send, sweep, tick x3, flush; with and without a key)",
+           f"{len(stub.posts)}")
+        ok(not (off / "memories/partner-notifications").exists(), "zero outbox: no partner state directory created")
+        noise = [o.stdout + o.stderr for o in outs if "[Partner notifications]" in o.stdout + o.stderr
+                 or "provisioned" in o.stdout + o.stderr or "QUEUED" in o.stdout or "can't send" in o.stdout]
+        ok(not noise, "zero status noise: no 'email not provisioned / queued' anywhere", noise[0][-300:] if noise else "")
+        sends = [o.stdout for o in outs if o.args[2:3] == ["send"]]
+        ok(sends and all(x.startswith("OFF:") for x in sends), "send prints OFF (nothing sent)", sends[0] if sends else "")
+        st = run([sys.executable, "tools/partner_notify.py", "status", "--json"], off, OFF)
+        stj = json.loads(st.stdout)
+        ok(stj.get("enabled") is False and stj["queued"] == 0 and "email_ready" not in stj
+           and "True Bearing" in stj.get("note", ""), "status --json: off, 0 queued, no email-readiness field")
+        st = run([sys.executable, "tools/partner_notify.py", "status"], off, {**OFF, "AGENTMAIL_API_KEY": ""})
+        ok("off" in st.stdout and "NOT provisioned" not in st.stdout and "True Bearing" in st.stdout,
+           "status (text): says off, never 'NOT provisioned'", st.stdout)
+        ok(not (off / "memories/partner-notifications").exists(), "status does not create partner state either")
+        wd = (off / "tools/watchdog.sh").read_text()
+        ok(wd.count('python3 "$tool" enabled --root "$CLAUDE_PROJECT_DIR" 2>/dev/null || return 0') == 2,
+           "watchdog: partner_check + partner_health return at once while off")
+        skills = off / ".claude/skills"
+        tells = [str(f.relative_to(off)) for f in skills.rglob("*.md")
+                 if "partner-notifications" not in f.parts and "partner_notify.py send" in f.read_text()]
+        ok(not tells, "no skill tells the AiCIV to email the reseller", ", ".join(tells))
+
         civ = birth(tmp / "civ")
 
-        print("[1] recipients + no-partner no-op")
+        print("[1] recipients + no-partner no-op (feed switched on via PARTNER_NOTIFY_EMAILS)")
         pp = json.loads(run([sys.executable, "tools/partner_profile.py", "show"], civ).stdout)
-        ok(pp["notify_emails"] == [PARTNER], "config/partner.json notify_emails -> the partner address")
+        ok(pp["notify_emails"] == [PARTNER], "PARTNER_NOTIFY_EMAILS switches the feed on -> the partner address")
+        ok(run([sys.executable, "tools/partner_notify.py", "enabled"], civ).returncode == 0, "`enabled` exits 0 (on)")
         pp = json.loads(run([sys.executable, "tools/partner_profile.py", "show"], civ,
                             {"PARTNER_NOTIFY_EMAILS": "ops@example.com, x"}).stdout)
         ok(pp["notify_emails"] == ["ops@example.com"], "PARTNER_NOTIFY_EMAILS overrides (invalid entries dropped)")
         bare = birth(tmp / "bare")
         (bare / "config/partner.json").unlink()
-        r = send(bare, "--event", "born")
-        ok(r.returncode == 0 and r.stdout.startswith("NO PARTNER") and not stub.posts,
+        r = send(bare, "--event", "born", extra=OFF)
+        ok(r.returncode == 0 and r.stdout.startswith("OFF") and not stub.posts,
            "no partner.json: nothing sent, exit 0")
         tpl = tmp / "tpl"
         shutil.copytree(SRC, tpl, ignore=shutil.ignore_patterns(".git", "__pycache__", "partner-notifications", ".venv"))

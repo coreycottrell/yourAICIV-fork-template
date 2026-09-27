@@ -93,7 +93,7 @@ runs it **for** its human (client #1 is their own business by default) and for t
 
 ```json
 {"brand": "yourAICIV", "reseller": "Travis Morehead", "payment_url": "https://buy.stripe.com/...",
- "notify_emails": ["partner@example.com"]}
+ "notify_emails": []}
 ```
 
 - `python3 tools/partner_profile.py show | name | intro` prints the resolved profile.
@@ -104,27 +104,20 @@ runs it **for** its human (client #1 is their own business by default) and for t
 - **Another reseller** gets their own distribution by replacing this one file. Delete it for a plain, unbranded
   AiCIV. A trial birth refuses to start without an `https://` payment link, from this file or `TRIAL_PAYMENT_URL`.
 
-### Partner notifications
+### Partner notifications: off by default
 
-Every AiCIV emails the partner in `notify_emails` (override: `PARTNER_NOTIFY_EMAILS`) one short notice per event,
-subject `[<brand>] <client> (<AiCIV>) - <event>`:
+**Reseller notifications come from True Bearing, not from the AiCIV** (Corey 2026-09-27). Not every AiCIV has an
+email inbox, and True Bearing already emails the reseller about billing and trial events from its own side. So
+`notify_emails` ships empty, and with it empty:
 
-| Event | Fired by |
-|---|---|
-| born and awake | session start hook, first session of a real birth |
-| first conversation done (goals, one line) | the AiCIV at interview Phase 5 / `.evolution-done` (backstop: disk sweep) |
-| each WOW build shipped (what + link) | the AiCIV when it writes ship-evidence (backstop: disk sweep) |
-| trial day 6 "expires tomorrow", trial expired (payment link shown), converted to paid | trial gate hook, watchdog, `apply_trial_profile.py convert` |
-| health problem (router unreachable, crash loop, Claude down 10+ min, or self-reported) | watchdog, the AiCIV |
-| delivery-engine alerts: new lead, order, booking, affiliate application | the client site, next to the owner's Telegram alert |
+- the AiCIV sends nothing, queues nothing (`memories/partner-notifications/` is never created), and shows no
+  "email not provisioned / queued" status to its human or operator;
+- the watchdog skips its partner checks, and `apply_trial_profile.py convert` says nothing about the partner;
+- client-site business alerts (lead, order, booking, affiliate application) go to the client owner only.
 
-- Method: `.claude/skills/partner-notifications/SKILL.md`. Sender: `tools/partner_notify.py`
-  (`send | sweep | flush | tick | status`). Each event has a key and is sent once, however many parts report it.
-- Transport: the AiCIV's own AgentMail inbox. Client sites email through their own Resend setup. With no email
-  provisioned, notices wait in `memories/partner-notifications/outbox/` (site alerts in
-  `apps/<slug>/logs/partner-outbox.jsonl`), the session status says so, and the watchdog sends them once email exists.
-  A notification never fails or slows the action that triggered it.
-- Empty `notify_emails` = nothing is sent.
+The code path is kept, dormant: `tools/partner_notify.py` (`send | sweep | flush | tick | status | enabled`) and
+skill `.claude/skills/partner-notifications/SKILL.md`. An operator can switch it on for one civ by putting addresses
+in `notify_emails` or setting `PARTNER_NOTIFY_EMAILS`; it then needs an AgentMail inbox on that civ (see the skill).
 
 ---
 
@@ -194,8 +187,8 @@ webhook on the payment link that calls `convert` for the matching civ.
 
 ```bash
 python3 tools/test_trial_profile.py                 # trial + partner regression suite (scratch births, no network)
-python3 tools/test_partner_notify.py                # partner notifications: every event, once, to the partner (stub transport)
-apps/.venv/bin/python tools/test_delivery_engine.py # delivery engine incl. partner copies of business alerts
+python3 tools/test_partner_notify.py                # partner notifications: off by default = silent; switched on = every event once (stub)
+apps/.venv/bin/python tools/test_delivery_engine.py # delivery engine (owner-only alerts by default; partner copy when switched on)
 python3 tools/apply_trial_profile.py check          # on a trial civ: no frontier model reachable
 python3 tools/trial_state.py status                 # the /api/trial JSON (not a trial -> "trial": false)
 ```
@@ -211,6 +204,6 @@ V1-V19 verification list in `.claude/skills/client-onboarding/SKILL.md`, Phase 4
 | `.claude/skills/` | skills the AiCIV loads (client-onboarding, m3-trial-mode, identity-interview, and more) |
 | `apps/client-starter/` | the delivery engine scaffold |
 | `profiles/trial-m3/` | the trial profile |
-| `config/partner.json` | reseller brand, reseller name, payment link, partner notification addresses |
+| `config/partner.json` | reseller brand, reseller name, payment link, partner notification addresses (empty = off, the default) |
 | `tools/` | provisioning and state tools (`apply_trial_profile.py`, `trial_state.py`, `partner_profile.py`, ...) |
 | `workflows/` | multi-mind workflows, including the trial's build, verify, and ship loop |

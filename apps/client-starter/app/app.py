@@ -728,8 +728,9 @@ def send_telegram(message, parse_mode=None, event="notification"):
 def notify_owner(message, event="notification"):
     """Owner alert for a business event (new lead / order / booking /
     affiliate application). Looked up through app helpers so modules and
-    tests share one seam. Never raises. The reseller partner gets an email
-    copy of the same alert (notify_partner)."""
+    tests share one seam. Never raises. Goes to the client owner only by
+    default; a reseller partner copy (notify_partner) is sent only when an
+    operator configured partner addresses (off by default)."""
     try:
         app.config["_helpers"]["notify_partner"](message, event=event)
     except Exception as e:
@@ -795,7 +796,8 @@ def _partner_worker(to_addrs, subject, text, key):
 def notify_partner(message, event="notification"):
     """Email the reseller partner a copy of an owner alert. Fire-and-forget
     (daemon thread): never blocks or fails the request. Returns the thread,
-    or None when no partner is configured."""
+    or None when no partner is configured -- the default: reseller
+    notifications come from True Bearing, so nothing is sent or queued."""
     import threading
     import uuid
     to_addrs = list(cfg.CLIENT_CONFIG.get("partner_notify_emails") or [])

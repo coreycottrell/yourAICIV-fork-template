@@ -2,16 +2,24 @@
 """
 partner_notify.py -- tell the reseller partner what is happening with their client.
 
+OFF BY DEFAULT (Corey 2026-09-27). Reseller notifications come from True Bearing,
+not from the AiCIV: not every AiCIV has an email inbox, and TB already emails the
+reseller about billing events. config/partner.json ships with an empty
+"notify_emails", and while it is empty this tool does nothing at all: no email,
+no outbox, no state directory, no status line, no health probe. The code path is
+kept dormant so an operator can switch it on for one civ later.
+
 The method lives in .claude/skills/partner-notifications/SKILL.md. This file is
 the thin sender that skill (and the hooks / watchdog) call.
 
 WHO:   config/partner.json "notify_emails" (tools/partner_profile.py), or
-       $PARTNER_NOTIFY_EMAILS. No addresses = nothing is ever sent (plain AiCIV).
-HOW:   this AiCIV's own AgentMail inbox (skill: agentmail-mastery). If no email
-       capability is provisioned the message waits in the OUTBOX
-       (memories/partner-notifications/outbox/) and every status says so; it is
-       sent by the next `flush` once email exists. Nothing here ever fails the
-       action that triggered it: every command exits 0 unless its arguments are wrong.
+       $PARTNER_NOTIFY_EMAILS. No addresses (the default) = off: nothing is ever
+       sent, queued or reported.
+HOW:   (only when switched on) this AiCIV's own AgentMail inbox (skill:
+       agentmail-mastery). If no email capability is provisioned the message
+       waits in the OUTBOX (memories/partner-notifications/outbox/) and is sent
+       by the next `flush` once email exists. Nothing here ever fails the action
+       that triggered it: every command exits 0 unless its arguments are wrong.
 ONCE:  every event has a key (born, first_conversation, wow_shipped:<n>, ...).
        A key is claimed atomically before anything is queued, so the AiCIV, the
        hooks and the watchdog can all report the same event and the partner
@@ -35,6 +43,7 @@ CLI
   partner_notify.py flush                  # send what waits in the outbox (+ app outboxes)
   partner_notify.py tick                   # sweep + model/router probe + flush (tools/watchdog.sh)
   partner_notify.py status [--json]        # recipients, transport, queued / sent counts
+  partner_notify.py enabled                # exit 0 = switched on, 1 = off (the default); prints nothing
 
 Environment (tests and provisioning):
   PARTNER_NOTIFY_EMAILS   replaces config/partner.json notify_emails
@@ -96,6 +105,14 @@ def civ_root(explicit: str | Path | None = None) -> Path:
 
 def disabled() -> bool:
     return os.environ.get("PARTNER_NOTIFY_DISABLE", "").strip() in ("1", "true", "yes")
+
+
+OFF_NOTE = "partner email is off (default); reseller notifications come from True Bearing"
+
+
+def enabled(root: Path) -> bool:
+    """Switched on = partner addresses configured and not disabled. Off is the default."""
+    return not disabled() and bool(partner_profile.load(root)["notify_emails"])
 
 
 def utcnow() -> datetime:
@@ -348,8 +365,8 @@ def import_app_outboxes(root: Path) -> int:
 def flush(root: Path) -> dict:
     """Send everything waiting. Returns {"sent": n, "queued": n, "transport": ..., "error": ...}."""
     res = {"sent": 0, "queued": 0, "transport": "none", "error": ""}
-    if disabled():
-        return res
+    if not enabled(root):
+        return res          # off: never touches the disk, never reports anything
     d = state_dir(root)
     with _Lock(root) as got:
         if not got:
@@ -420,12 +437,11 @@ def agentmail_config_offline(root: Path) -> bool:
 
 
 def status_line(root: Path) -> str:
-    """One line for the AiCIV's session status. Empty when there is nothing to say."""
-    if disabled():
+    """One line for the AiCIV's session status. Empty when there is nothing to say,
+    and always empty while partner email is off (the default)."""
+    if not enabled(root):
         return ""
     rcpt = partner_profile.load(root)["notify_emails"]
-    if not rcpt:
-        return ""
     d = root / STATE_DIR / "outbox"
     queued = len(list(d.glob("*.json"))) if d.exists() else 0
     if not queued:
@@ -448,7 +464,7 @@ def notify(root: Path, event: str, summary: str = "", link: str = "", build: str
             return {"result": "error", "error": f"unknown event {event!r}; one of {', '.join(EVENTS)}"}
         to = partner_profile.load(root)["notify_emails"]
         if not to:
-            return {"result": "no-partner", "detail": "no notify_emails in config/partner.json"}
+            return {"result": "off", "detail": OFF_NOTE}
         if key is None:
             key = {"wow_shipped": f"wow_shipped:{build or 'x'}",
                    "health": f"health:{kind or 'general'}:{utcnow().strftime('%Y-%m-%d')}",
@@ -518,7 +534,7 @@ def trial_events(root: Path) -> list[tuple]:
 
 def sweep(root: Path, deliver: bool = True) -> list[dict]:
     """Report every event visible on disk. Idempotent: each key is sent once, ever."""
-    if disabled() or not partner_profile.load(root)["notify_emails"]:
+    if not enabled(root):
         return []
     found: list[tuple] = []           # (event, summary, link, extra, build)
     if is_real_birth(root):
@@ -554,7 +570,7 @@ def sweep(root: Path, deliver: bool = True) -> list[dict]:
 def kick(root: Path) -> None:
     """For hooks: run the sweep without slowing the hook (background, throttled, silent)."""
     try:
-        if disabled() or not partner_profile.load(root)["notify_emails"]:
+        if not enabled(root):
             return
         stamp = state_dir(root) / ".last-kick"
         try:
@@ -625,7 +641,7 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--build", default="")
     s.add_argument("--kind", default="")
     s.add_argument("--no-deliver", action="store_true")
-    for name in ("sweep", "flush", "tick", "status"):
+    for name in ("sweep", "flush", "tick", "status", "enabled"):
         sp = sub.add_parser(name)
         sp.add_argument("--root", default=None)
         if name == "sweep":
@@ -639,7 +655,7 @@ def main(argv: list[str] | None = None) -> int:
     if a.cmd == "send":
         r = notify(root, a.event, a.summary, a.link, a.build, a.kind, deliver=not a.no_deliver)
         line = {"sent": "SENT", "queued": "QUEUED", "duplicate": "ALREADY REPORTED",
-                "no-partner": "NO PARTNER", "disabled": "DISABLED"}.get(r["result"], "ERROR")
+                "off": "OFF", "disabled": "DISABLED"}.get(r["result"], "ERROR")
         extra = r.get("why_queued") or r.get("error") or r.get("detail") or ""
         print(f"{line}: {a.event} -> {', '.join(r.get('to', [])) or '-'}" + (f" ({extra})" if extra else ""))
         return 0
@@ -650,7 +666,11 @@ def main(argv: list[str] | None = None) -> int:
     if a.cmd == "flush":
         print(json.dumps(flush(root)))
         return 0
+    if a.cmd == "enabled":
+        return 0 if enabled(root) else 1
     if a.cmd == "tick":
+        if not enabled(root):
+            return 0        # off: no sweep, no router probe, no outbox, no log line
         try:
             sweep(root, deliver=False)
             probe_model(root)
@@ -659,7 +679,12 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as e:  # noqa: BLE001
             print(f"partner_notify tick: {type(e).__name__}: {e}", file=sys.stderr)
         return 0
+    if not enabled(root):
+        st = {"enabled": False, "recipients": [], "queued": 0, "sent": 0, "note": OFF_NOTE}
+        print(json.dumps(st, indent=2) if a.json else f"{OFF_NOTE}. Nothing is sent or queued.")
+        return 0
     st = write_status(root)
+    st["enabled"] = True
     if a.json:
         print(json.dumps(st, indent=2))
     else:

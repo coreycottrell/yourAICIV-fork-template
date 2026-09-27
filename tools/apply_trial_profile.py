@@ -442,10 +442,13 @@ def publish_operator_copy(dest: Path, rec: dict) -> None:
 # ── convert ──────────────────────────────────────────────────────────────────
 
 def notify_partner_converted(root: Path) -> None:
-    """Tell the reseller partner (config/partner.json notify_emails). Once; never fails convert."""
+    """Tell the reseller partner (config/partner.json notify_emails). Once; never fails convert.
+    Off by default (reseller notifications come from True Bearing): then it says nothing."""
     try:
         import partner_notify  # sibling tool
         r = partner_notify.notify(root, "converted", "The operator converted this trial to paid.")
+        if r.get("result") in ("off", "disabled"):
+            return
         log(f"partner notification (converted): {r.get('result')}"
             + (f" ({r['why_queued']})" if r.get("why_queued") else ""))
     except Exception as e:  # noqa: BLE001

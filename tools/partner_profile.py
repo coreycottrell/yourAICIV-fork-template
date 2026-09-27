@@ -10,10 +10,12 @@ partner's brand instead of generic or internal names:
       "brand":         "yourAICIV",              # what the human calls the product
       "reseller":      "Travis Morehead",        # who sold it (may be "")
       "payment_url":   "https://buy.stripe.com/...",  # where the human subscribes (may be "")
-      "notify_emails": ["partner@example.com"]   # who hears about everything that happens
-    }                                            # with this client (may be [])
+      "notify_emails": []                        # EMPTY by default = partner email off
+    }
 
 notify_emails is read by tools/partner_notify.py (skill: partner-notifications).
+It ships empty: reseller notifications come from True Bearing, not the AiCIV
+(Corey 2026-09-27). Addresses here switch the dormant AiCIV-side feed on.
 Provisioning override: $PARTNER_NOTIFY_EMAILS (comma/space separated) replaces
 the file's list when set, so one image can serve several resellers.
 
