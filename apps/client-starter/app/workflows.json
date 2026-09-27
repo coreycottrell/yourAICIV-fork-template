@@ -1,0 +1,45 @@
+{
+  "_readme": [
+    "Automations for THIS client instance. The AiCIV edits this file; there is no admin editor.",
+    "After editing: cd <instance>/app && python3 manage.py sync-workflows   (validates, then loads; a bad file is refused).",
+    "It is also loaded at every app start (a bad file is logged and the previous definitions are kept).",
+    "trigger.type: form_submitted (forms: contact | subscriber | order | appointment; [] = any) or tag_added (tag_name).",
+    "  once_per_contact (default true): a contact never gets the same workflow twice.",
+    "steps[].action: send_email (template: an id under templates) | add_tag | remove_tag (tag_name).",
+    "steps[].delay: wait before this step, counted from the PREVIOUS step (first step: from enrollment). 0, 30m, 2h, 3d.",
+    "status: active | paused. Removing a workflow from this file archives it (its enrollments stop).",
+    "Merge fields in subject/body_html: {{first_name}} ('there' if unknown), {{last_name}}, {{email}}, {{business_name}}. Visitor values are HTML-escaped.",
+    "Every email gets the business footer + a working one-click unsubscribe link automatically."
+  ],
+  "templates": {
+    "welcome": {
+      "name": "Welcome",
+      "subject": "Thanks for reaching out to {{business_name}}",
+      "body_html": "<p>Hi {{first_name}},</p><p>Thanks for getting in touch with {{business_name}}. We got your message and will reply personally soon, usually within one business day.</p><p>In the meantime, just reply to this email if there is anything you want to add.</p><p>Talk soon,<br>The {{business_name}} team</p>"
+    },
+    "follow-up": {
+      "name": "Follow-up (+2 days)",
+      "subject": "Any questions, {{first_name}}?",
+      "body_html": "<p>Hi {{first_name}},</p><p>Just checking in. Did you have any questions we can answer about working with {{business_name}}?</p><p>Reply to this email and a real person will get back to you.</p><p>The {{business_name}} team</p>"
+    },
+    "value": {
+      "name": "Value (+7 days)",
+      "subject": "What our clients love about {{business_name}}",
+      "body_html": "<p>Hi {{first_name}},</p><p>Here is what our clients tell us they value most about {{business_name}}:</p><ol><li>We respond fast and personally.</li><li>We make the process simple.</li><li>We follow through on what we promise.</li></ol><p>Whenever you are ready, reply to this email and we will take it from there.</p><p>The {{business_name}} team</p>"
+    }
+  },
+  "workflows": [
+    {
+      "id": "welcome-sequence",
+      "name": "New lead welcome sequence",
+      "description": "Welcome right away, a check-in 2 days later, a value email 7 days after the first contact.",
+      "status": "active",
+      "trigger": {"type": "form_submitted", "forms": ["contact", "subscriber"], "once_per_contact": true},
+      "steps": [
+        {"delay": "0", "action": "send_email", "template": "welcome"},
+        {"delay": "2d", "action": "send_email", "template": "follow-up"},
+        {"delay": "5d", "action": "send_email", "template": "value"}
+      ]
+    }
+  ]
+}

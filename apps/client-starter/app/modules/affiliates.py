@@ -239,6 +239,9 @@ def affiliate_apply():
              code, payout_method, zelle_address,
              datetime.now().isoformat()))
         db.commit()
+        helpers['notify_owner'](
+            f"New affiliate application: {name} ({email}). "
+            "Review it under Admin > Affiliates.", event="affiliate")
         flash('Your affiliate application has been submitted!', 'success')
         return redirect(url_for('affiliates.affiliate_apply'))
     return render_template('public/affiliate_apply.html')

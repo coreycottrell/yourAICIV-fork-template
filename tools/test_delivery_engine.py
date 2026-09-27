@@ -7,6 +7,14 @@ clone_client.sh, then runs tools/delivery_engine_checks.py inside it
 (in-process Flask test client; Stripe, Telegram and Resend are stubbed, no
 port is bound, nothing leaves the box). The temp dir is deleted afterwards.
 
+Coverage: the security hardening checks, plus the automation checks (AUTO):
+a contact form fires a Telegram lead alert and a welcome-workflow enrollment;
+alerts for order / booking / affiliate application; Telegram down or hanging
+never fails or slows the request; scheduled steps send (day 0 / 2 / 7) through
+the cron endpoint, the shared processor and the in-process runner; held /
+retry / unsubscribe / double-claim behaviour; workflows.json validate, load,
+archive via manage.py.
+
     python3 tools/test_delivery_engine.py [--python PATH] [--keep]
 
 --python   a Python that has the app dependencies (apps/client-starter/requirements.txt).

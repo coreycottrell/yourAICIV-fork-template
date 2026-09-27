@@ -8,8 +8,10 @@ Toggleable via config: modules.email_marketing and modules.workflows
 """
 
 import os
+import re
 import sys
 import json
+import time
 import html
 import secrets
 import hashlib
@@ -116,6 +118,8 @@ CREATE TABLE IF NOT EXISTS workflow_enrollments (
     next_action_at TEXT,
     enrolled_at TEXT,
     completed_at TEXT,
+    attempts INTEGER DEFAULT 0,
+    last_error TEXT,
     FOREIGN KEY (workflow_id) REFERENCES workflows(id) ON DELETE CASCADE,
     FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE
 );
@@ -149,6 +153,11 @@ def migrate(db):
     for col in ("confirm_token_hash", "confirm_sent_at", "confirmed_at"):
         if col not in cols:
             db.execute(f"ALTER TABLE email_subscribers ADD COLUMN {col} TEXT")
+    cols = {r[1] for r in db.execute("PRAGMA table_info(workflow_enrollments)")}
+    if "attempts" not in cols:
+        db.execute("ALTER TABLE workflow_enrollments ADD COLUMN attempts INTEGER DEFAULT 0")
+    if "last_error" not in cols:
+        db.execute("ALTER TABLE workflow_enrollments ADD COLUMN last_error TEXT")
 
 
 # ── Per-recipient unsubscribe tokens (HMAC, work for ANY address) ──────
@@ -325,34 +334,281 @@ def _with_unsubscribe_footer(body_html, email):
 
 
 # ── Workflow engine ─────────────────────────────────────────────────────
+#
+# DEFINITIONS live in app/workflows.json. The AiCIV edits that file (there
+# is no admin editor) and they are synced into the workflows /
+# workflow_steps / email_templates tables at startup and by
+# `python3 manage.py sync-workflows` (which validates first and refuses a
+# bad file; startup keeps the previous definitions if the file is bad).
+#
+# TRIGGERS fire from app.sync_to_crm(): every public form (contact, order,
+# appointment), a confirmed newsletter subscription and an admin-added
+# subscriber call it, which enrolls the contact in each ACTIVE workflow whose
+# trigger matches ("form_submitted" with a forms list, or "tag_added").
+#
+# DUE STEPS are sent by process_due_workflows(), driven by:
+#   - the in-process runner (start_runner; one daemon thread per gunicorn
+#     worker, every CLIENT_WORKFLOW_INTERVAL s, woken at once on enrollment),
+#   - POST /api/process-workflows with X-Cron-Key (external cron),
+#   - `python3 manage.py run-workflows` (by hand).
+# Every due enrollment is CLAIMED with a conditional UPDATE before it is
+# processed, so several workers / a cron call never send the same step twice.
+
+WORKFLOWS_FILE = os.environ.get("CLIENT_WORKFLOWS_FILE") or os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "workflows.json")
+TRIGGER_TYPES = ("form_submitted", "tag_added")
+ACTION_TYPES = ("send_email", "add_tag", "remove_tag")
+_MANAGED = "workflows.json"
+CLAIM_LEASE_MINUTES = 10
+MAX_SEND_ATTEMPTS = 5
+STALE_HOURS = int(os.environ.get("CLIENT_WORKFLOW_STALE_HOURS", "72"))
+_ID_RX = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}$")
+_MERGE_RX = re.compile(r"\{\{\s*(\w+)\s*\}\}")
+
+
+class WorkflowConfigError(ValueError):
+    """workflows.json is missing, unreadable or invalid (message says where)."""
+
+
+def _fmt(dt):
+    return dt.strftime("%Y-%m-%dT%H:%M:%S")
+
+
+def _parse_delay(value, where):
+    """0 / 30 / '45m' / '2h' / '3d' -> minutes."""
+    if isinstance(value, bool):
+        raise WorkflowConfigError(f"{where}: delay must be like 0, 30m, 2h or 3d")
+    if isinstance(value, int):
+        minutes = value
+    else:
+        txt = str(value).strip().lower()
+        units = {"m": 1, "h": 60, "d": 1440}
+        if txt.isdigit():
+            minutes = int(txt)
+        elif len(txt) > 1 and txt[-1] in units and txt[:-1].isdigit():
+            minutes = int(txt[:-1]) * units[txt[-1]]
+        else:
+            raise WorkflowConfigError(
+                f"{where}: delay {value!r} must be like 0, 30m, 2h or 3d")
+    if not 0 <= minutes <= 366 * 1440:
+        raise WorkflowConfigError(f"{where}: delay must be between 0 and 366d")
+    return minutes
+
+
+def load_workflow_definitions(path=None):
+    """Read + validate workflows.json. Returns (templates, workflows)."""
+    path = path or WORKFLOWS_FILE
+    try:
+        with open(path) as fh:
+            data = json.load(fh)
+    except FileNotFoundError:
+        raise WorkflowConfigError(f"{path} not found")
+    except (OSError, json.JSONDecodeError) as e:
+        raise WorkflowConfigError(f"{path}: cannot read JSON: {e}")
+    if not isinstance(data, dict):
+        raise WorkflowConfigError("top level must be an object with "
+                                  "'templates' and 'workflows'")
+
+    templates = data.get("templates", {})
+    if not isinstance(templates, dict):
+        raise WorkflowConfigError("'templates' must be an object keyed by template id")
+    for tid, t in templates.items():
+        if not _ID_RX.match(tid):
+            raise WorkflowConfigError(
+                f"template id {tid!r}: use lowercase letters, digits, - or _")
+        if not isinstance(t, dict) or not str(t.get("subject", "")).strip() \
+                or not str(t.get("body_html", "")).strip():
+            raise WorkflowConfigError(
+                f"template '{tid}': needs a non-empty 'subject' and 'body_html'")
+
+    workflows = data.get("workflows", [])
+    if not isinstance(workflows, list):
+        raise WorkflowConfigError("'workflows' must be a list")
+    seen, out = set(), []
+    for i, w in enumerate(workflows):
+        if not isinstance(w, dict):
+            raise WorkflowConfigError(f"workflows[{i}] must be an object")
+        wid = str(w.get("id", "")).strip()
+        if not _ID_RX.match(wid):
+            raise WorkflowConfigError(
+                f"workflows[{i}]: 'id' must be lowercase letters, digits, - or _")
+        if wid in seen:
+            raise WorkflowConfigError(f"workflow id '{wid}' is used twice")
+        seen.add(wid)
+        where = f"workflow '{wid}'"
+        status = w.get("status", "active")
+        if status not in ("active", "paused"):
+            raise WorkflowConfigError(f"{where}: status must be 'active' or 'paused'")
+        trig = w.get("trigger")
+        if not isinstance(trig, dict) or trig.get("type") not in TRIGGER_TYPES:
+            raise WorkflowConfigError(
+                f"{where}: trigger.type must be one of {', '.join(TRIGGER_TYPES)}")
+        tconf = {"managed_by": _MANAGED,
+                 "once_per_contact": bool(trig.get("once_per_contact", True))}
+        if trig["type"] == "form_submitted":
+            forms = trig.get("forms", [])
+            if not isinstance(forms, list) or \
+                    not all(isinstance(f, str) and f.strip() for f in forms):
+                raise WorkflowConfigError(
+                    f"{where}: trigger.forms must be a list of form names "
+                    f"(contact, subscriber, order, appointment); [] = any form")
+            tconf["forms"] = [f.strip() for f in forms]
+        else:
+            tag = trig.get("tag_name")
+            if not isinstance(tag, str) or not tag.strip():
+                raise WorkflowConfigError(f"{where}: trigger.tag_name is required")
+            tconf["tag_name"] = tag.strip()
+        steps = w.get("steps")
+        if not isinstance(steps, list) or not steps:
+            raise WorkflowConfigError(f"{where}: needs at least one step")
+        norm = []
+        for j, st in enumerate(steps, 1):
+            sw = f"{where} step {j}"
+            if not isinstance(st, dict) or st.get("action") not in ACTION_TYPES:
+                raise WorkflowConfigError(
+                    f"{sw}: action must be one of {', '.join(ACTION_TYPES)}")
+            conf = {}
+            if st["action"] == "send_email":
+                if st.get("template") not in templates:
+                    raise WorkflowConfigError(
+                        f"{sw}: template {st.get('template')!r} is not defined "
+                        f"under 'templates'")
+                conf["template_id"] = st["template"]
+            else:
+                tag = st.get("tag_name")
+                if not isinstance(tag, str) or not tag.strip():
+                    raise WorkflowConfigError(f"{sw}: tag_name is required")
+                conf["tag_name"] = tag.strip()
+            norm.append({"action": st["action"], "config": conf,
+                         "delay_minutes": _parse_delay(st.get("delay", 0), sw)})
+        out.append({"id": wid, "name": str(w.get("name") or wid),
+                    "description": str(w.get("description", "")),
+                    "status": status, "trigger_type": trig["type"],
+                    "trigger_config": tconf, "steps": norm})
+    return templates, out
+
+
+def sync_workflows(db, path=None):
+    """Validate workflows.json, then upsert it into the DB in one transaction.
+    Workflows that came from the file but were removed from it are archived
+    (their enrollments stop). Raises WorkflowConfigError on a bad file."""
+    templates, workflows = load_workflow_definitions(path)
+    now = now_iso()
+    if db.in_transaction:
+        db.commit()
+    db.execute("BEGIN IMMEDIATE")
+    try:
+        for tid, t in templates.items():
+            db.execute(
+                "INSERT INTO email_templates (id, name, subject, body_html, body_text, "
+                "category, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'workflow', ?, ?) "
+                "ON CONFLICT(id) DO UPDATE SET name = excluded.name, "
+                "subject = excluded.subject, body_html = excluded.body_html, "
+                "body_text = excluded.body_text, updated_at = excluded.updated_at",
+                (tid, str(t.get("name") or tid), t["subject"], t["body_html"],
+                 str(t.get("body_text", "")), now, now))
+        for w in workflows:
+            db.execute(
+                "INSERT INTO workflows (id, name, description, trigger_type, "
+                "trigger_config, status, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET "
+                "name = excluded.name, description = excluded.description, "
+                "trigger_type = excluded.trigger_type, "
+                "trigger_config = excluded.trigger_config, status = excluded.status, "
+                "updated_at = excluded.updated_at",
+                (w["id"], w["name"], w["description"], w["trigger_type"],
+                 json.dumps(w["trigger_config"]), w["status"], now, now))
+            db.execute("DELETE FROM workflow_steps WHERE workflow_id = ?", (w["id"],))
+            for n, st in enumerate(w["steps"]):
+                db.execute(
+                    "INSERT INTO workflow_steps (id, workflow_id, step_order, "
+                    "action_type, action_config, delay_minutes, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (f"{w['id']}:{n}", w["id"], n, st["action"],
+                     json.dumps(st["config"]), st["delay_minutes"], now))
+        ids = {w["id"] for w in workflows}
+        archived = 0
+        for row in db.execute("SELECT id, trigger_config, status FROM workflows").fetchall():
+            try:
+                conf = json.loads(row[1] or "{}")
+            except (TypeError, ValueError):
+                conf = {}
+            if conf.get("managed_by") == _MANAGED and row[0] not in ids \
+                    and row[2] != "archived":
+                db.execute("UPDATE workflows SET status = 'archived', updated_at = ? "
+                           "WHERE id = ?", (now, row[0]))
+                archived += 1
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    return {"templates": len(templates), "workflows": len(workflows),
+            "active": sum(1 for w in workflows if w["status"] == "active"),
+            "archived": archived}
+
+
+def seed(db):
+    """Startup hook (app.init_db): load workflows.json; never crash the app."""
+    if not os.path.exists(WORKFLOWS_FILE):
+        sys.stderr.write(f"[WORKFLOW] {WORKFLOWS_FILE} not found: no automations "
+                         "defined\n")
+        return
+    try:
+        r = sync_workflows(db)
+        sys.stderr.write(
+            f"[WORKFLOW] loaded workflows.json: {r['workflows']} workflow(s) "
+            f"({r['active']} active), {r['templates']} template(s)"
+            + (f", {r['archived']} archived" if r["archived"] else "") + "\n")
+    except WorkflowConfigError as e:
+        sys.stderr.write(f"[WORKFLOW] workflows.json NOT loaded (previous "
+                         f"definitions kept): {e}\n")
+
 
 def enroll_in_workflows(db, contact_id, trigger_type, trigger_context=None):
-    """Check for active workflows matching this trigger and enroll the contact."""
+    """Enroll the contact in every ACTIVE workflow matching this trigger.
+    Returns how many enrollments were created."""
     trigger_context = trigger_context or {}
     now = now_iso()
+    contact = db.execute("SELECT id, unsubscribed FROM contacts WHERE id = ?",
+                         (contact_id,)).fetchone()
+    if not contact or contact["unsubscribed"]:
+        return 0
     workflows = db.execute(
         "SELECT * FROM workflows WHERE trigger_type = ? AND status = 'active'",
         (trigger_type,)
     ).fetchall()
 
+    created = 0
     for w in workflows:
-        config = json.loads(w['trigger_config']) if w['trigger_config'] else {}
+        try:
+            config = json.loads(w['trigger_config']) if w['trigger_config'] else {}
+        except (TypeError, ValueError):
+            config = {}
 
-        if trigger_type == 'tag_added' and config.get('tag_name'):
-            if trigger_context.get('tag_name') != config['tag_name']:
+        if trigger_type == 'form_submitted':
+            forms = config.get('forms')
+            if forms and trigger_context.get('form_name') not in forms:
                 continue
-        elif trigger_type == 'form_submitted' and config.get('form_name'):
-            if trigger_context.get('form_name') != config['form_name']:
+            if config.get('form_name') and \
+                    trigger_context.get('form_name') != config['form_name']:
+                continue
+        elif trigger_type == 'tag_added' and config.get('tag_name'):
+            if trigger_context.get('tag_name') != config['tag_name']:
                 continue
         elif trigger_type == 'order_placed' and config.get('product_match'):
             if trigger_context.get('product_match') != config['product_match']:
                 continue
 
-        existing = db.execute(
-            "SELECT id FROM workflow_enrollments "
-            "WHERE workflow_id = ? AND contact_id = ? AND status = 'active'",
-            (w['id'], contact_id)
-        ).fetchone()
+        if config.get('once_per_contact'):
+            existing = db.execute(
+                "SELECT id FROM workflow_enrollments "
+                "WHERE workflow_id = ? AND contact_id = ?",
+                (w['id'], contact_id)).fetchone()
+        else:
+            existing = db.execute(
+                "SELECT id FROM workflow_enrollments "
+                "WHERE workflow_id = ? AND contact_id = ? AND status = 'active'",
+                (w['id'], contact_id)).fetchone()
         if existing:
             continue
 
@@ -361,8 +617,10 @@ def enroll_in_workflows(db, contact_id, trigger_type, trigger_context=None):
             "WHERE workflow_id = ? ORDER BY step_order LIMIT 1",
             (w['id'],)
         ).fetchone()
-        delay = first_step['delay_minutes'] if first_step else 0
-        next_at = (datetime.fromisoformat(now) + timedelta(minutes=delay)).isoformat()
+        if not first_step:
+            continue
+        next_at = _fmt(datetime.fromisoformat(now)
+                       + timedelta(minutes=first_step['delay_minutes'] or 0))
 
         db.execute(
             """INSERT INTO workflow_enrollments
@@ -370,8 +628,264 @@ def enroll_in_workflows(db, contact_id, trigger_type, trigger_context=None):
                 next_action_at, enrolled_at)
                VALUES (?, ?, ?, 0, 'active', ?, ?)""",
             (str(uuid.uuid4()), w['id'], contact_id, next_at, now))
+        created += 1
 
     db.commit()
+    return created
+
+
+def _render_workflow_email(template, contact, business_name):
+    """Merge {{field}} values. Contact fields can come from public forms:
+    HTML-escaped in the body, line breaks stripped in the subject."""
+    words = (contact['first_name'] or '').split()
+    values = {
+        'first_name': words[0] if words else 'there',
+        'last_name': contact['last_name'] or '',
+        'email': contact['email'] or '',
+        'phone': contact['phone'] or '',
+        'company_name': contact['company_name'] or '',
+        'business_name': business_name or '',
+    }
+
+    def merge(text, for_subject):
+        def repl(m):
+            if m.group(1) not in values:
+                return m.group(0)
+            raw = values[m.group(1)]
+            return ' '.join(raw.split())[:100] if for_subject else html.escape(raw)
+        return _MERGE_RX.sub(repl, text or '')
+
+    return merge(template['subject'], True), merge(template['body_html'], False)
+
+
+def _log_email(db, contact, template_id, workflow_id, subject, status, now):
+    db.execute(
+        """INSERT INTO email_log (id, contact_id, template_id, workflow_id,
+           to_email, subject, status, sent_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (str(uuid.uuid4()), contact['id'] if contact else None, template_id,
+         workflow_id, contact['email'] if contact else None, subject, status, now))
+
+
+def _run_step(db, helpers, eid, scheduled_at, now_dt):
+    """Run the current step of one CLAIMED enrollment. Returns an outcome:
+    sent | done | retry | failed | skipped | cancelled | completed | error."""
+    now = _fmt(now_dt)
+    e = db.execute("SELECT * FROM workflow_enrollments WHERE id = ?", (eid,)).fetchone()
+    steps = db.execute(
+        "SELECT * FROM workflow_steps WHERE workflow_id = ? ORDER BY step_order",
+        (e['workflow_id'],)).fetchall()
+    step_num = e['current_step'] or 0
+    if step_num >= len(steps):
+        db.execute("UPDATE workflow_enrollments SET status = 'completed', "
+                   "completed_at = ? WHERE id = ?", (now, eid))
+        db.commit()
+        return 'completed'
+    step = steps[step_num]
+    label = f"{e['workflow_id']} step {step_num + 1}/{len(steps)}"
+    try:
+        conf = json.loads(step['action_config'] or '{}')
+    except (TypeError, ValueError):
+        conf = {}
+    contact = db.execute("SELECT * FROM contacts WHERE id = ?",
+                         (e['contact_id'],)).fetchone()
+    if not contact:
+        db.execute("UPDATE workflow_enrollments SET status = 'error', "
+                   "last_error = 'contact deleted' WHERE id = ?", (eid,))
+        db.commit()
+        return 'error'
+    cref = f"contact {contact['id'][:8]}"
+    outcome = 'done'
+
+    if step['action_type'] == 'send_email':
+        if contact['unsubscribed'] or not contact['email']:
+            reason = 'unsubscribed' if contact['unsubscribed'] else 'no email address'
+            db.execute("UPDATE workflow_enrollments SET status = 'cancelled', "
+                       "completed_at = ?, last_error = ? WHERE id = ?",
+                       (now, reason, eid))
+            db.commit()
+            sys.stderr.write(f"[WORKFLOW] {label}: {cref} {reason}; sequence stopped\n")
+            return 'cancelled'
+        template = db.execute("SELECT * FROM email_templates WHERE id = ?",
+                              (conf.get('template_id', ''),)).fetchone()
+        stale = datetime.fromisoformat(scheduled_at) < now_dt - timedelta(hours=STALE_HOURS)
+        if not template:
+            _log_email(db, contact, conf.get('template_id'), e['workflow_id'],
+                       '', 'failed_no_template', now)
+            sys.stderr.write(f"[WORKFLOW] {label}: template "
+                             f"{conf.get('template_id')!r} missing; step skipped\n")
+            outcome = 'skipped'
+        elif stale:
+            _log_email(db, contact, template['id'], e['workflow_id'],
+                       template['subject'], 'skipped_stale', now)
+            sys.stderr.write(f"[WORKFLOW] {label}: was due {scheduled_at}, more than "
+                             f"{STALE_HOURS}h ago; email skipped as stale\n")
+            outcome = 'skipped'
+        else:
+            subj, body = _render_workflow_email(
+                template, contact, helpers['config'].get('business_name', ''))
+            body, list_headers = _with_unsubscribe_footer(body, contact['email'])
+            try:
+                result = helpers['send_email'](contact['email'], subj, body,
+                                               headers=list_headers)
+            except ValueError:            # provider rate limit: back off
+                result = None
+            if not result:
+                attempts = (e['attempts'] or 0) + 1
+                if attempts >= MAX_SEND_ATTEMPTS:
+                    _log_email(db, contact, template['id'], e['workflow_id'],
+                               subj, 'failed', now)
+                    db.execute("UPDATE workflow_enrollments SET status = 'error', "
+                               "attempts = ?, last_error = ? WHERE id = ?",
+                               (attempts, f"send failed {attempts}x", eid))
+                    db.commit()
+                    sys.stderr.write(f"[WORKFLOW] {label}: send to {cref} failed "
+                                     f"{attempts}x; enrollment stopped\n")
+                    return 'failed'
+                retry_at = _fmt(now_dt + timedelta(minutes=15 * 2 ** (attempts - 1)))
+                db.execute("UPDATE workflow_enrollments SET attempts = ?, "
+                           "last_error = 'send failed', next_action_at = ? WHERE id = ?",
+                           (attempts, retry_at, eid))
+                db.commit()
+                sys.stderr.write(f"[WORKFLOW] {label}: send to {cref} failed "
+                                 f"(attempt {attempts}); retry at {retry_at}\n")
+                return 'retry'
+            _log_email(db, contact, template['id'], e['workflow_id'], subj, 'sent', now)
+            sys.stderr.write(f"[WORKFLOW] {label}: sent '{template['id']}' to {cref} "
+                             f"(provider id {result if isinstance(result, str) else 'n/a'})\n")
+            outcome = 'sent'
+
+    elif step['action_type'] in ('add_tag', 'remove_tag'):
+        tag_name = conf.get('tag_name', '')
+        tag = db.execute("SELECT id FROM tags WHERE name = ?", (tag_name,)).fetchone()
+        if step['action_type'] == 'add_tag' and tag_name:
+            if tag:
+                tag_id = tag['id']
+            else:
+                tag_id = str(uuid.uuid4())
+                db.execute("INSERT INTO tags (id, name, created_at) VALUES (?, ?, ?)",
+                           (tag_id, tag_name, now))
+            db.execute("INSERT OR IGNORE INTO contact_tags (contact_id, tag_id, added_at) "
+                       "VALUES (?, ?, ?)", (contact['id'], tag_id, now))
+        elif tag:
+            db.execute("DELETE FROM contact_tags WHERE contact_id = ? AND tag_id = ?",
+                       (contact['id'], tag['id']))
+        sys.stderr.write(f"[WORKFLOW] {label}: {step['action_type']} '{tag_name}' "
+                         f"on {cref}\n")
+
+    # Advance (delays are measured from THIS step, not from enrollment)
+    next_step = step_num + 1
+    if next_step < len(steps):
+        next_at = _fmt(now_dt + timedelta(minutes=steps[next_step]['delay_minutes'] or 0))
+        db.execute("UPDATE workflow_enrollments SET current_step = ?, next_action_at = ?, "
+                   "attempts = 0, last_error = NULL WHERE id = ?",
+                   (next_step, next_at, eid))
+    else:
+        db.execute("UPDATE workflow_enrollments SET status = 'completed', completed_at = ?, "
+                   "current_step = ?, attempts = 0, last_error = NULL WHERE id = ?",
+                   (now, next_step, eid))
+    db.commit()
+    return outcome
+
+
+def process_due_workflows(db, helpers, now_dt=None, limit=100):
+    """Send every due workflow step once. Shared by the runner thread, the
+    cron endpoint and manage.py. Returns counts (no PII)."""
+    now_dt = (now_dt or datetime.now()).replace(microsecond=0)
+    now = _fmt(now_dt)
+    email_ok = helpers.get('email_configured', lambda: True)()
+    stats = {'due': 0, 'sent': 0, 'done': 0, 'retry': 0, 'failed': 0,
+             'skipped': 0, 'cancelled': 0, 'completed': 0, 'error': 0,
+             'held_no_email_provider': 0, 'claimed_elsewhere': 0}
+    due = db.execute(
+        """SELECT we.id, we.next_action_at, we.workflow_id, we.current_step
+           FROM workflow_enrollments we JOIN workflows w ON we.workflow_id = w.id
+           WHERE we.status = 'active' AND we.next_action_at <= ?
+             AND w.status = 'active'
+           ORDER BY we.next_action_at LIMIT ?""", (now, limit)).fetchall()
+    stats['due'] = len(due)
+    lease = _fmt(now_dt + timedelta(minutes=CLAIM_LEASE_MINUTES))
+    for row in due:
+        if not email_ok:
+            step = db.execute(
+                "SELECT action_type FROM workflow_steps WHERE workflow_id = ? "
+                "ORDER BY step_order LIMIT 1 OFFSET ?",
+                (row['workflow_id'], row['current_step'] or 0)).fetchone()
+            if step and step['action_type'] == 'send_email':
+                stats['held_no_email_provider'] += 1   # keeps its place in line
+                continue
+        cur = db.execute(
+            "UPDATE workflow_enrollments SET next_action_at = ? "
+            "WHERE id = ? AND status = 'active' AND next_action_at = ?",
+            (lease, row['id'], row['next_action_at']))
+        db.commit()
+        if cur.rowcount != 1:
+            stats['claimed_elsewhere'] += 1
+            continue
+        try:
+            stats[_run_step(db, helpers, row['id'], row['next_action_at'], now_dt)] += 1
+        except Exception as e:
+            stats['error'] += 1
+            db.rollback()
+            try:
+                db.execute("UPDATE workflow_enrollments SET last_error = ? WHERE id = ?",
+                           (f"{type(e).__name__}: {e}"[:300], row['id']))
+                db.commit()
+            except Exception:
+                db.rollback()
+            sys.stderr.write(f"[WORKFLOW] enrollment {row['id'][:8]} error "
+                             f"(retries after {CLAIM_LEASE_MINUTES} min): {e}\n")
+    return stats
+
+
+# ── In-process runner (one daemon thread per app process) ──────────────
+
+_runner_lock = threading.Lock()
+_runner_started = False
+_runner_wake = threading.Event()
+_held_logged_at = [0.0]
+
+
+def wake_runner():
+    """Ask the runner (if running in this process) to run now."""
+    _runner_wake.set()
+
+
+def start_runner(app_obj, interval=None):
+    """Start the runner thread once per process. Returns True if started."""
+    global _runner_started
+    with _runner_lock:
+        if _runner_started:
+            return False
+        _runner_started = True
+    interval = float(interval or os.environ.get('CLIENT_WORKFLOW_INTERVAL', '60'))
+
+    def loop():
+        sys.stderr.write(f"[WORKFLOW] runner started (pid {os.getpid()}, "
+                         f"every {interval:.0f}s)\n")
+        _runner_wake.set()                       # first pass right away
+        while True:
+            _runner_wake.wait(interval)
+            _runner_wake.clear()
+            try:
+                with app_obj.app_context():
+                    h = app_obj.config['_helpers']
+                    stats = process_due_workflows(h['get_db'](), h)
+                acted = {k: v for k, v in stats.items()
+                         if v and k not in ('due', 'held_no_email_provider',
+                                            'claimed_elsewhere')}
+                if acted:
+                    sys.stderr.write(f"[WORKFLOW] runner pass: {json.dumps(acted)}\n")
+                held = stats['held_no_email_provider']
+                if held and time.time() - _held_logged_at[0] > 3600:
+                    _held_logged_at[0] = time.time()
+                    sys.stderr.write(
+                        f"[WORKFLOW] {held} due email step(s) waiting: email is not "
+                        "configured (set RESEND_API_KEY and EMAIL_FROM in .env)\n")
+            except Exception as e:
+                sys.stderr.write(f"[WORKFLOW] runner pass failed: {e}\n")
+
+    threading.Thread(target=loop, daemon=True, name='workflow-runner').start()
+    return True
 
 
 # ── Admin: Subscribers ──────────────────────────────────────────────────
@@ -445,6 +959,9 @@ def admin_subscriber_add():
         return redirect(url_for('email_marketing.admin_subscribers'))
     _add_subscriber(db, email, name=name, phone=phone or None,
                     source='manual', tags=tags)
+    # The admin asserts consent: CRM contact + "subscriber" automations.
+    helpers['sync_to_crm']({'email': email, 'first_name': name, 'phone': phone},
+                           'subscriber', trusted=True)
     flash(f'Subscriber {email} added.', 'success')
     return redirect(url_for('email_marketing.admin_subscribers'))
 
@@ -935,7 +1452,7 @@ def subscribe_confirm(token):
     db = helpers['get_db']()
     digest = hashlib.sha256(token.encode()).hexdigest()
     sub = db.execute(
-        "SELECT id, email, confirm_sent_at FROM email_subscribers "
+        "SELECT id, email, name, confirm_sent_at FROM email_subscribers "
         "WHERE confirm_token_hash = ?", (digest,)).fetchone()
     valid = bool(sub)
     if valid and sub['confirm_sent_at']:
@@ -956,6 +1473,10 @@ def subscribe_confirm(token):
             "UPDATE contacts SET unsubscribed = 0, unsubscribed_at = NULL "
             "WHERE LOWER(email) = ?", (sub['email'].lower(),))
         db.commit()
+        # Consent confirmed: CRM contact (tag "Newsletter") + "subscriber"
+        # automations (e.g. the welcome sequence in workflows.json).
+        helpers['sync_to_crm']({'email': sub['email'], 'first_name': sub['name'] or ''},
+                               'subscriber')
         return render_template('public/subscribe_confirm.html', state='done')
     return render_template('public/subscribe_confirm.html', state='ask')
 
@@ -1095,147 +1616,47 @@ def resend_webhook():
     return jsonify({'status': 'ok'}), 200
 
 
+# ── Admin: Automations (read-only; definitions live in workflows.json) ──
+
+@email_bp.route('/admin/automations')
+@_admin_required
+def admin_automations():
+    helpers = _get_app_helpers()
+    db = helpers['get_db']()
+    workflows = []
+    for w in db.execute("SELECT * FROM workflows WHERE status != 'archived' "
+                        "ORDER BY name").fetchall():
+        try:
+            trig = json.loads(w['trigger_config'] or '{}')
+        except (TypeError, ValueError):
+            trig = {}
+        steps = db.execute(
+            "SELECT s.*, t.subject FROM workflow_steps s LEFT JOIN email_templates t "
+            "ON t.id = json_extract(s.action_config, '$.template_id') "
+            "WHERE s.workflow_id = ? ORDER BY s.step_order", (w['id'],)).fetchall()
+        counts = {r['status']: r['n'] for r in db.execute(
+            "SELECT status, COUNT(*) AS n FROM workflow_enrollments "
+            "WHERE workflow_id = ? GROUP BY status", (w['id'],)).fetchall()}
+        workflows.append({'w': w, 'trigger': trig, 'steps': steps, 'counts': counts})
+    recent = db.execute(
+        "SELECT l.*, c.first_name FROM email_log l LEFT JOIN contacts c "
+        "ON c.id = l.contact_id WHERE l.workflow_id IS NOT NULL "
+        "ORDER BY l.sent_at DESC LIMIT 25").fetchall()
+    return render_template('admin/automations.html', workflows=workflows,
+                           recent=recent,
+                           email_ok=helpers['email_configured'](),
+                           telegram_ok=helpers['telegram_configured']())
+
+
 # ── Workflow Processor (cron endpoint) ──────────────────────────────────
 
 @email_bp.route('/api/process-workflows', methods=['POST'])
 @_cron_key_required
 def api_process_workflows():
-    """Process pending workflow steps. Call via cron every 5 minutes."""
+    """Send due workflow steps now. The in-process runner already does this
+    every minute; this endpoint is for an external cron (X-Cron-Key header)."""
     helpers = _get_app_helpers()
-    db = helpers['get_db']()
-    send_crm_email = helpers.get('send_crm_email', helpers['send_email'])
-    now = now_iso()
-    processed = 0
-    errors = 0
-
-    pending = db.execute("""
-        SELECT we.*, w.status as workflow_status
-        FROM workflow_enrollments we
-        JOIN workflows w ON we.workflow_id = w.id
-        WHERE we.status = 'active' AND we.next_action_at <= ? AND w.status = 'active'
-        ORDER BY we.next_action_at LIMIT 100
-    """, (now,)).fetchall()
-
-    for enrollment in pending:
-        try:
-            step_num = enrollment['current_step']
-            steps = db.execute(
-                "SELECT * FROM workflow_steps WHERE workflow_id = ? ORDER BY step_order",
-                (enrollment['workflow_id'],)
-            ).fetchall()
-
-            if step_num >= len(steps):
-                db.execute(
-                    "UPDATE workflow_enrollments SET status='completed', "
-                    "completed_at=? WHERE id=?",
-                    (now, enrollment['id']))
-                processed += 1
-                continue
-
-            step = steps[step_num]
-            config = json.loads(step['action_config']) if step['action_config'] else {}
-            contact = db.execute(
-                "SELECT * FROM contacts WHERE id = ?",
-                (enrollment['contact_id'],)
-            ).fetchone()
-
-            if not contact:
-                db.execute(
-                    "UPDATE workflow_enrollments SET status='error' WHERE id=?",
-                    (enrollment['id'],))
-                errors += 1
-                continue
-
-            if step['action_type'] == 'send_email':
-                template = db.execute(
-                    "SELECT * FROM email_templates WHERE id = ?",
-                    (config.get('template_id', ''),)
-                ).fetchone()
-                if template and contact['email'] and not contact['unsubscribed']:
-                    subj = template['subject'] or ''
-                    body = template['body_html'] or ''
-                    for field in ['first_name', 'last_name', 'email',
-                                  'phone', 'company_name']:
-                        # Contact fields can come from public forms: escape
-                        # into HTML, strip line breaks from the subject.
-                        raw = contact[field] or ''
-                        body = body.replace('{{' + field + '}}', html.escape(raw))
-                        subj = subj.replace('{{' + field + '}}',
-                                            ' '.join(raw.split())[:100])
-                    body, list_headers = _with_unsubscribe_footer(body, contact['email'])
-                    if send_crm_email is helpers['send_email']:
-                        result = send_crm_email(contact['email'], subj, body,
-                                                headers=list_headers)
-                    else:
-                        result = send_crm_email(contact['email'], subj, body)
-                    ok = result is not None and result is not False
-                    if ok:
-                        db.execute(
-                            """INSERT INTO email_log
-                               (id, contact_id, template_id, workflow_id,
-                                to_email, subject, status, sent_at)
-                               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                            (str(uuid.uuid4()), contact['id'], template['id'],
-                             enrollment['workflow_id'], contact['email'],
-                             subj, 'sent', now))
-
-            elif step['action_type'] == 'add_tag':
-                tag_name = config.get('tag_name', '')
-                if tag_name:
-                    tag = db.execute(
-                        "SELECT id FROM tags WHERE name = ?", (tag_name,)
-                    ).fetchone()
-                    if not tag:
-                        tag_id = str(uuid.uuid4())
-                        db.execute(
-                            "INSERT INTO tags (id, name, created_at) VALUES (?, ?, ?)",
-                            (tag_id, tag_name, now))
-                    else:
-                        tag_id = tag['id']
-                    try:
-                        db.execute(
-                            "INSERT INTO contact_tags (contact_id, tag_id, added_at) "
-                            "VALUES (?, ?, ?)",
-                            (contact['id'], tag_id, now))
-                    except Exception:
-                        pass
-
-            elif step['action_type'] == 'remove_tag':
-                tag_name = config.get('tag_name', '')
-                if tag_name:
-                    tag = db.execute(
-                        "SELECT id FROM tags WHERE name = ?", (tag_name,)
-                    ).fetchone()
-                    if tag:
-                        db.execute(
-                            "DELETE FROM contact_tags "
-                            "WHERE contact_id = ? AND tag_id = ?",
-                            (contact['id'], tag['id']))
-
-            # Advance
-            next_step = step_num + 1
-            if next_step < len(steps):
-                next_delay = steps[next_step]['delay_minutes']
-                next_at = (datetime.fromisoformat(now)
-                           + timedelta(minutes=next_delay)).isoformat()
-                db.execute(
-                    "UPDATE workflow_enrollments SET current_step = ?, "
-                    "next_action_at = ? WHERE id = ?",
-                    (next_step, next_at, enrollment['id']))
-            else:
-                db.execute(
-                    "UPDATE workflow_enrollments SET status = 'completed', "
-                    "completed_at = ?, current_step = ? WHERE id = ?",
-                    (now, next_step, enrollment['id']))
-
-            processed += 1
-        except Exception as e:
-            errors += 1
-            sys.stderr.write(
-                f"Workflow error for enrollment {enrollment['id']}: {e}\n")
-
-    db.commit()
-    return jsonify({'processed': processed, 'errors': errors, 'pending': len(pending)})
+    return jsonify(process_due_workflows(helpers['get_db'](), helpers))
 
 
 # ── Module registration ─────────────────────────────────────────────────
@@ -1248,6 +1669,8 @@ def get_nav_items():
          'match': 'email_marketing.admin_subscriber'},
         {'label': 'Campaigns', 'endpoint': 'email_marketing.admin_campaigns',
          'match': 'email_marketing.admin_campaign'},
+        {'label': 'Automations', 'endpoint': 'email_marketing.admin_automations',
+         'match': 'email_marketing.admin_automations'},
     ]
 
 

@@ -67,6 +67,8 @@ Nothing under `apps/{slug}/` or any `.env` is ever committed (the `.gitignore` e
 | Port already bound | clone prints `WARNING: Port N appears to be in use` | Re-clone to a new slug dir with an explicit free port in 5100-5199, or change `CLIENT_PORT` in that instance `.env` (and its systemd unit) |
 | `ModuleNotFoundError: flask` | App or clone fails on import | You ran system `python3`; use the `apps/.venv` path (clone) or `run.sh` (start) |
 | Verify box ticked without evidence | verification-log.md has PASS with no receipt | Treat as NOT MET. R2/R3 (email/Telegram) especially need a real received message |
+| Lead alert or welcome email never arrives | `grep -E 'TELEGRAM|WORKFLOW|EMAIL' apps/{slug}/logs/app.log`; `manage.py workflows` shows `email configured: NO` or steps `due now` | Usually configuration: `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID` or `RESEND_API_KEY`/`EMAIL_FROM` missing in `.env` (restart after editing), or an unverified sending domain (`[EMAIL] provider rejected send: HTTP 4xx`). Due emails wait in line while email is off, so nothing is lost if you fix it within 72h |
+| `workflows.json` edit rejected | `manage.py sync-workflows` exits with `INVALID: <reason>` | Fix what the reason names; the previous definitions stay in force meanwhile |
 | Trial expired mid-onboarding | `config/trial.json` expired | Stop phase work, keep everything running and untouched, answer with the payment note |
 
 ---
@@ -78,3 +80,5 @@ Nothing under `apps/{slug}/` or any `.env` is ever committed (the `.gitignore` e
 - `memories/identity/.client-onboarding-done` shows whether the birth path is finished.
 - `apps/{slug}/logs/app.log` (mode 0600, via `run.sh`) or `journalctl -u client-{slug}` (systemd) holds each instance's server log. Never `/tmp` (world-readable).
 - `python3 apps/{slug}/app/manage.py status` shows whether the admin password is set and whether a setup link is pending.
+- `python3 apps/{slug}/app/manage.py workflows` shows each automation, its enrollment counts, how many steps are due, how many emails were sent/failed, and whether email and Telegram are configured (no contact data).
+- `/admin/automations` shows the same to the client, read-only.

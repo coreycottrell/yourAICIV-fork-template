@@ -95,6 +95,20 @@ scaffold verbatim". Changes since then (each needed to run safely):
 | Order page token in the URL (template audit follow-up) | Stripe's `success_url` must carry the order's access token, so `/order/<id>?token=T` verifies `T` (constant time), records the order id in the signed HttpOnly session cookie, and 303-redirects to the clean `/order/<id>`. The clean URL renders only for that session or an admin. Every response on the route sends `Referrer-Policy: no-referrer` and `Cache-Control: no-store`. The on-site (non-Stripe) checkout never puts the token in a URL. The token stays valid as the entry point, so a buyer in another browser can follow the Stripe link again. |
 | L1-L8 | POST logout (admin + affiliate); cron key header-only + POST-only workflow runner; same-host referrer redirects; CSP (`script-src 'self'`; inline JS moved to `static/js/app.js`); generic payment errors to buyers/webhooks; rate limits on cart/checkout/booking; Resend `svix-id` dedupe. |
 
+### Automations wired (ws5, 2026-09-27)
+
+Upstream shipped `send_telegram()` and `enroll_in_workflows()` but called neither, and had no
+way to define a workflow, so lead alerts and the welcome sequence never happened.
+
+| Change | Where |
+|--------|-------|
+| Owner Telegram alerts on new lead (contact form), order, booking and affiliate application. Fire-and-forget daemon thread, 5s timeout (`CLIENT_TELEGRAM_TIMEOUT`), plain text, result logged (`[TELEGRAM] ...`, bot token redacted). No-op when Telegram is not configured. | `app.py` (`send_telegram`, `notify_owner`), `modules/{ecommerce,appointments,affiliates}.py` |
+| Workflow definitions are config: `app/workflows.json` (templates + workflows), validated and synced into the DB at startup and by `manage.py sync-workflows`; removed workflows are archived. Ships an active 3-email welcome sequence (day 0 / 2 / 7) for `contact` + `subscriber`. `modules.workflows` is on by default. | `app/workflows.json`, `modules/email_marketing.py`, `config.py` |
+| Enrollment: `sync_to_crm()` fires `form_submitted` (and `tag_added` for a newly auto-applied tag) for every public form, a confirmed subscription and an admin-added subscriber. `once_per_contact` by default; unsubscribed contacts are never enrolled and their sequences stop. | `app.py`, `modules/email_marketing.py` |
+| Runner: one daemon thread per gunicorn worker (`app/gunicorn.conf.py` `post_worker_init`, used by `run.sh` and the systemd unit), every 60s and immediately after an enrollment. Each due step is claimed with a conditional UPDATE, so workers and the cron endpoint never double-send. Email not configured: steps wait in line; stale (> 72h) emails are skipped; provider failures retry with backoff (5 tries). Every attempt lands in `email_log` + the log. `POST /api/process-workflows` (X-Cron-Key) and `manage.py run-workflows` share the same code. | `modules/email_marketing.py`, `app/gunicorn.conf.py`, `run.sh`, `deploy/` |
+| Read-only admin page `/admin/automations` (workflows, steps, counts, recent sends); `manage.py workflows` for the AiCIV. | `templates/admin/automations.html`, `manage.py` |
+| `_send_email` logs provider failures; `RESEND_API_BASE` / `TELEGRAM_API_BASE` env overrides exist only to point a local test at a stub. | `app.py` |
+
 Open items for the security review (not changed here -- claims to verify in code,
 not in the README table): the package says "bcrypt" but Werkzeug 3 hashes with
 scrypt by default; `.env` also stores the plaintext admin password next to its

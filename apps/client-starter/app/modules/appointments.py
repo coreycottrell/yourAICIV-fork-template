@@ -107,6 +107,10 @@ def book():
         if sync:
             sync({'first_name': name.split()[0] if name else '',
                   'email': email, 'phone': phone}, 'appointment')
+        helpers['notify_owner'](
+            f"New booking: {name} ({email}) -- {date} {time} [{appt_type}]"
+            + (f"\nNotes: {' '.join(notes.split())[:200]}" if notes else ''),
+            event="booking")
 
         flash('Appointment request submitted! We will confirm shortly.', 'success')
         return redirect(url_for('appointments.book'))

@@ -415,12 +415,12 @@ def checkout():
                   'last_name': ' '.join(name.split()[1:]) if len(name.split()) > 1 else '',
                   'email': email, 'phone': phone}, 'order')
 
-        # Telegram notification: plain text (no parse_mode), buyer text inert
-        tg = helpers.get('send_telegram')
-        if tg:
-            items_desc = ', '.join(f"{l['name']} x{l['qty']}" for l in lines)
-            tg(f"New order #{order_id[:8]} ({provider_name})\n{name} - {email}\n"
-               f"Items: {items_desc}\nTotal: ${subtotal:.2f}")
+        # Owner alert: plain text (no parse_mode), buyer text inert;
+        # fire-and-forget, so a Telegram outage never slows checkout.
+        items_desc = ', '.join(f"{l['name']} x{l['qty']}" for l in lines)
+        helpers['notify_owner'](
+            f"New order #{order_id[:8]}: {name} ({email}) -- ${subtotal:.2f} "
+            f"({provider_name})\nItems: {items_desc}", event="order")
 
         session.pop('cart', None)
         if result.get('status') == 'redirect' and result.get('redirect_url'):

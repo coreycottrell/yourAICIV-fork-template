@@ -99,6 +99,10 @@ CLIENT_CONFIG = {
     "notification_email": os.environ.get("NOTIFICATION_EMAIL", ""),
 
     # ── Notifications ─────────────────────────────────────────────────────
+    # When both are set, the owner gets a plain-text Telegram alert on every
+    # new lead (contact form), order, booking and affiliate application.
+    # Fire-and-forget (CLIENT_TELEGRAM_TIMEOUT, default 5s): a Telegram
+    # outage never slows or fails the visitor's request; results are logged.
     "telegram_bot_token": os.environ.get("TELEGRAM_BOT_TOKEN", ""),
     "telegram_chat_id": os.environ.get("TELEGRAM_CHAT_ID", ""),
 
@@ -109,7 +113,9 @@ CLIENT_CONFIG = {
     "modules": {
         "crm":              True,      # Contacts, tags, activity log -- core
         "email_marketing":  False,     # Subscribers, campaigns, send engine
-        "workflows":        False,     # Automation engine (triggers, steps)
+        "workflows":        True,      # Automation engine: app/workflows.json
+                                       # (welcome sequence on new leads; the
+                                       # runner sends due steps every minute)
         "ecommerce":        False,     # Products, orders, cart, checkout
         "blog":             False,     # Blog CRUD + public display
         "affiliates":       False,     # Affiliate / referral program

@@ -6,6 +6,8 @@
 # the reverse proxy / tunnel, never by binding a public interface.
 # Logs go to logs/app.log (mode 0600); there is no access log, because URLs
 # can carry one-time tokens. Secrets are read from .env by app/config.py.
+# app/gunicorn.conf.py starts the workflow runner in each worker, so
+# automation emails go out as long as this process is up (no cron needed).
 set -euo pipefail
 umask 077
 INSTANCE_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -21,6 +23,7 @@ if [ ! -x "$VENV/bin/gunicorn" ]; then
 fi
 mkdir -p "$INSTANCE_DIR/logs"
 exec "$VENV/bin/gunicorn" \
+    --config "$INSTANCE_DIR/app/gunicorn.conf.py" \
     --chdir "$INSTANCE_DIR/app" \
     --bind "127.0.0.1:$PORT" \
     --workers 2 --threads 4 \

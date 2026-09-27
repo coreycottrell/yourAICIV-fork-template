@@ -470,6 +470,236 @@ check("GL admin dashboard reachable after login",
 r = client("10.66.0.2").get("/", base_url="http://127.0.0.1", headers=FWD)
 check("GL prefix header ignored from untrusted peer", f'{PFX}/static/'.encode() not in r.data)
 
+# ── AUTO: owner alerts + welcome workflow + scheduled sends (ws5) ───────
+import io, threading, datetime as _dt
+from datetime import datetime, timedelta
+H["send_telegram"] = A.send_telegram                 # undo the H5 stub: real path
+TG_TOKEN = "123456:TEST-not-a-real-token"
+cfg.CLIENT_CONFIG["telegram_bot_token"] = TG_TOKEN
+cfg.CLIENT_CONFIG["telegram_chat_id"] = "42"
+tg_calls, tg_evt = [], threading.Event()
+def fake_tg_post(bot_token, body, timeout):
+    tg_calls.append({"token": bot_token, "body": body, "timeout": timeout})
+    tg_evt.set()
+    return 200
+A._telegram_post = fake_tg_post
+def wait_tg(n, secs=3.0):
+    end = time.time() + secs
+    while len(tg_calls) < n and time.time() < end:
+        time.sleep(0.02)
+    return len(tg_calls) >= n
+
+# 1. contact form -> Telegram alert + welcome enrollment
+lead = client("10.20.0.1")
+r = post(lead, "/contact", {"name": "Lena Lead", "email": "lena@example.org",
+                            "message": "Do you do weekend sessions?"})
+check("AUTO contact form still succeeds (302)", r.status_code == 302, r.status_code)
+check("AUTO contact form -> Telegram sendMessage", wait_tg(1))
+tb = tg_calls[-1]["body"] if tg_calls else {}
+check("AUTO lead alert text + chat id", tb.get("chat_id") == "42" and
+      tb.get("text", "").startswith("New lead: Lena Lead (lena@example.org)") and
+      "weekend sessions" in tb.get("text", ""), str(tb))
+check("AUTO lead alert is plain text, short timeout",
+      "parse_mode" not in tb and tg_calls and tg_calls[-1]["timeout"] <= 5)
+lena = db.execute("SELECT id FROM contacts WHERE email='lena@example.org'").fetchone()
+enr = db.execute("SELECT * FROM workflow_enrollments WHERE contact_id=? AND "
+                 "workflow_id='welcome-sequence'", (lena["id"],)).fetchall() if lena else []
+check("AUTO contact form -> enrolled in welcome-sequence (step 0, active, due now)",
+      len(enr) == 1 and enr[0]["status"] == "active" and enr[0]["current_step"] == 0 and
+      enr[0]["next_action_at"] <= datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
+      str([dict(e) for e in enr]))
+post(client("10.20.0.2"), "/contact", {"name": "Lena", "email": "lena@example.org", "message": "again"})
+check("AUTO once_per_contact: a second submission does not re-enroll",
+      db.execute("SELECT COUNT(*) FROM workflow_enrollments WHERE contact_id=?",
+                 (lena["id"],)).fetchone()[0] == 1)
+
+# 2. Telegram down / hanging never blocks or fails the request
+old_err = sys.stderr; cap = io.StringIO()
+def down_post(bot_token, body, timeout):
+    import urllib.error
+    raise urllib.error.URLError(f"connection refused to bot{bot_token}")
+A._telegram_post = down_post
+sys.stderr = cap
+try:
+    r = post(client("10.20.0.3"), "/contact", {"name": "Dan Down", "email": "dan@example.org", "message": "m"})
+    time.sleep(0.3)
+finally:
+    sys.stderr = old_err
+check("AUTO Telegram down: form still 302", r.status_code == 302)
+check("AUTO Telegram failure is logged, token redacted",
+      "lead alert FAILED" in cap.getvalue() and TG_TOKEN not in cap.getvalue(), cap.getvalue()[-300:])
+def slow_post(bot_token, body, timeout):
+    time.sleep(3)
+A._telegram_post = slow_post
+t0 = time.time()
+r = post(client("10.20.0.4"), "/contact", {"name": "Sam Slow", "email": "sam@example.org", "message": "m"})
+check("AUTO Telegram hanging: response not delayed (<1s)",
+      r.status_code == 302 and time.time() - t0 < 1.0, f"{time.time() - t0:.2f}s")
+A._telegram_post = fake_tg_post
+cfg.CLIENT_CONFIG["telegram_chat_id"] = ""
+n = len(tg_calls)
+with app.test_request_context("/"):
+    none_ret = A.send_telegram("x")
+check("AUTO Telegram unconfigured: no-op, no call", none_ret is None and len(tg_calls) == n)
+cfg.CLIENT_CONFIG["telegram_chat_id"] = "42"
+
+# 3. booking, affiliate application, order -> alerts
+n = len(tg_calls)
+post(client("10.20.0.5"), "/book", {"name": "Bea Booker", "email": "bea@example.org",
+                                    "date": "2026-11-02", "time": "09:30"})
+check("AUTO booking -> 'New booking' alert",
+      wait_tg(n + 1) and tg_calls[-1]["body"]["text"].startswith("New booking: Bea Booker"))
+n = len(tg_calls)
+post(client("10.20.0.6"), "/affiliate/apply", {"name": "Al Affiliate", "email": "al@example.org"})
+check("AUTO affiliate application -> alert",
+      wait_tg(n + 1) and tg_calls[-1]["body"]["text"].startswith("New affiliate application: Al Affiliate"))
+cfg.CLIENT_CONFIG["payment"]["active_provider"] = "manual"
+n = len(tg_calls)
+ob = client("10.20.0.7")
+post(ob, "/cart/add", {"product_id": "cheap", "qty": "2"}, ref="/store")
+post(ob, "/checkout", {"name": "Olga Order", "email": "olga@example.org"}, ref="/cart")
+check("AUTO new order -> 'New order' alert with total",
+      wait_tg(n + 1) and tg_calls[-1]["body"]["text"].startswith("New order #")
+      and "Olga Order" in tg_calls[-1]["body"]["text"] and "$20.00" in tg_calls[-1]["body"]["text"])
+cfg.CLIENT_CONFIG["payment"]["active_provider"] = "stripe"
+
+# 4. scheduled steps actually send (email provider mocked)
+mail = []
+def fake_send(to, subj, body, tags=None, headers=None):
+    mail.append({"to": to, "subj": subj, "body": body, "headers": headers or {}})
+    return f"em_{len(mail)}"
+H["send_email"] = fake_send
+cfg.CLIENT_CONFIG["resend_api_key"] = "re_test_placeholder"
+cfg.CLIENT_CONFIG["email_from"] = "hello@de-selftest.example.com"
+def run_due(now_dt=None):
+    with app.test_request_context("/", base_url="https://localhost"):
+        return email_marketing.process_due_workflows(H["get_db"](), H, now_dt=now_dt)
+def to(addr):
+    return [m for m in mail if m["to"] == addr]
+k = cfg.CLIENT_CONFIG["cron_key"]
+r = client("10.6.0.9").post("/api/process-workflows", headers={"X-Cron-Key": k}, base_url="https://localhost")
+stats = r.get_json() or {}
+check("AUTO cron endpoint runs due steps", r.status_code == 200 and stats.get("sent", 0) >= 1, str(stats))
+w1 = to("lena@example.org")
+check("AUTO welcome email sent to the lead",
+      len(w1) == 1 and w1[0]["subj"] == f"Thanks for reaching out to {cfg.CLIENT_CONFIG['business_name']}"
+      and "Hi Lena," in w1[0]["body"], str(w1)[:300])
+check("AUTO welcome email carries unsubscribe link + List-Unsubscribe",
+      w1 and "/unsubscribe/" in w1[0]["body"] and w1[0]["headers"].get("List-Unsubscribe"))
+lg = db.execute("SELECT * FROM email_log WHERE to_email='lena@example.org'").fetchall()
+check("AUTO email_log row 'sent' for welcome",
+      len(lg) == 1 and lg[0]["status"] == "sent" and lg[0]["template_id"] == "welcome")
+e1 = db.execute("SELECT * FROM workflow_enrollments WHERE contact_id=?", (lena["id"],)).fetchone()
+nxt = datetime.fromisoformat(e1["next_action_at"])
+check("AUTO enrollment advanced to step 2, due in ~2 days",
+      e1["current_step"] == 1 and timedelta(days=1, hours=23) < nxt - datetime.now() < timedelta(days=2, minutes=5),
+      f"{e1['current_step']} {e1['next_action_at']}")
+check("AUTO nothing re-sent on an immediate second pass",
+      run_due()["sent"] == 0 and len(to("lena@example.org")) == 1)
+run_due(datetime.now() + timedelta(days=2, minutes=1))
+check("AUTO +2d follow-up sent", len(to("lena@example.org")) == 2 and
+      to("lena@example.org")[-1]["subj"] == "Any questions, Lena?")
+run_due(datetime.now() + timedelta(days=7, minutes=2))
+e1 = db.execute("SELECT * FROM workflow_enrollments WHERE contact_id=?", (lena["id"],)).fetchone()
+check("AUTO +7d value email sent, enrollment completed",
+      len(to("lena@example.org")) == 3 and e1["status"] == "completed", e1["status"])
+
+# 5. email not configured -> held in place (not lost, not advanced)
+cfg.CLIENT_CONFIG["resend_api_key"] = ""
+post(client("10.20.0.8"), "/contact", {"name": "Hal Held", "email": "hal@example.org", "message": "m"})
+hal = db.execute("SELECT we.* FROM workflow_enrollments we JOIN contacts c ON c.id=we.contact_id "
+                 "WHERE c.email='hal@example.org'").fetchone()
+st = run_due()
+hal2 = db.execute("SELECT * FROM workflow_enrollments WHERE id=?", (hal["id"],)).fetchone()
+check("AUTO no email provider: step held, not sent, not advanced",
+      st["held_no_email_provider"] >= 1 and not to("hal@example.org") and
+      hal2["current_step"] == 0 and hal2["next_action_at"] == hal["next_action_at"], str(st))
+cfg.CLIENT_CONFIG["resend_api_key"] = "re_test_placeholder"
+run_due()
+check("AUTO held step sends once email is configured", len(to("hal@example.org")) == 1)
+
+# 6. provider failure -> retry with backoff; unsubscribed -> sequence stops
+H["send_email"] = lambda *a, **kw: None
+post(client("10.20.0.9"), "/contact", {"name": "Fay Fail", "email": "fay@example.org", "message": "m"})
+run_due()
+fay = db.execute("SELECT we.* FROM workflow_enrollments we JOIN contacts c ON c.id=we.contact_id "
+                 "WHERE c.email='fay@example.org'").fetchone()
+check("AUTO send failure -> retry scheduled (attempts=1, step not advanced)",
+      fay["attempts"] == 1 and fay["current_step"] == 0 and fay["next_action_at"] >
+      datetime.now().strftime("%Y-%m-%dT%H:%M:%S"), str(dict(fay)))
+H["send_email"] = fake_send
+dbw = sqlite3.connect(A.DB_PATH)
+dbw.execute("UPDATE contacts SET unsubscribed=1 WHERE email='fay@example.org'"); dbw.commit(); dbw.close()
+run_due(datetime.now() + timedelta(hours=1))
+fay = db.execute("SELECT * FROM workflow_enrollments WHERE id=?", (fay["id"],)).fetchone()
+check("AUTO unsubscribed contact: sequence cancelled, nothing sent",
+      fay["status"] == "cancelled" and not to("fay@example.org"))
+
+# 7. double-processing guard: a claimed enrollment is skipped by a second runner
+post(client("10.20.0.10"), "/contact", {"name": "Cy Claim", "email": "cy@example.org", "message": "m"})
+cy = db.execute("SELECT we.* FROM workflow_enrollments we JOIN contacts c ON c.id=we.contact_id "
+                "WHERE c.email='cy@example.org'").fetchone()
+dbw = sqlite3.connect(A.DB_PATH)   # simulate another worker winning the claim
+dbw.execute("UPDATE workflow_enrollments SET next_action_at=? WHERE id=?",
+            ((datetime.now() + timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M:%S"), cy["id"])); dbw.commit(); dbw.close()
+run_due()
+check("AUTO claimed enrollment not sent twice", not to("cy@example.org"))
+
+# 8. subscriber confirmation -> CRM contact + welcome enrollment
+s9 = client("10.20.0.11")
+post(s9, "/subscribe", {"email": "sue@example.org", "name": "Sue Sub"}, ref="/")
+conf = re.search(r'/subscribe/confirm/([A-Za-z0-9_\-]+)', mail[-1]["body"])
+post(s9, f"/subscribe/confirm/{conf.group(1)}")
+sue = db.execute("SELECT we.* FROM workflow_enrollments we JOIN contacts c ON c.id=we.contact_id "
+                 "WHERE c.email='sue@example.org'").fetchone()
+check("AUTO confirmed subscriber -> contact + welcome enrollment",
+      sue is not None and sue["workflow_id"] == "welcome-sequence")
+
+# 9. config-driven definitions: validate, load, archive
+bad = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+json.dump({"templates": {}, "workflows": [{"id": "x", "trigger": {"type": "form_submitted"},
+          "steps": [{"action": "send_email", "template": "nope"}]}]}, bad); bad.close()
+try:
+    email_marketing.sync_workflows(sqlite3.connect(A.DB_PATH), bad.name); raised = ""
+except email_marketing.WorkflowConfigError as e:
+    raised = str(e)
+check("AUTO invalid workflows.json refused with a reason", "not defined" in raised, raised)
+p = subprocess.run([sys.executable, "manage.py", "sync-workflows"], cwd=here,
+                   env=dict(os.environ, CLIENT_WORKFLOWS_FILE=bad.name), capture_output=True, text=True)
+check("AUTO manage.py sync-workflows refuses the bad file (exit != 0)",
+      p.returncode != 0 and "INVALID" in (p.stderr + p.stdout), p.stderr[-200:])
+good = json.load(open(os.path.join(here, "workflows.json")))
+good["templates"]["vip"] = {"subject": "Welcome, VIP {{first_name}}", "body_html": "<p>VIP perks inside.</p>"}
+good["workflows"].append({"id": "vip-perks", "name": "VIP perks", "trigger": {"type": "tag_added", "tag_name": "VIP"},
+                          "steps": [{"delay": "1h", "action": "send_email", "template": "vip"},
+                                    {"delay": "0", "action": "add_tag", "tag_name": "VIP welcomed"}]})
+gf = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False); json.dump(good, gf); gf.close()
+p = subprocess.run([sys.executable, "manage.py", "sync-workflows"], cwd=here,
+                   env=dict(os.environ, CLIENT_WORKFLOWS_FILE=gf.name), capture_output=True, text=True)
+vip = db.execute("SELECT * FROM workflows WHERE id='vip-perks'").fetchone()
+steps = db.execute("SELECT delay_minutes, action_type FROM workflow_steps WHERE workflow_id='vip-perks' "
+                   "ORDER BY step_order").fetchall()
+check("AUTO manage.py sync-workflows loads a new workflow from JSON",
+      p.returncode == 0 and vip is not None and vip["status"] == "active" and
+      [tuple(s) for s in steps] == [(60, "send_email"), (0, "add_tag")], p.stdout + p.stderr[-200:])
+p = subprocess.run([sys.executable, "manage.py", "sync-workflows"], cwd=here, capture_output=True, text=True)
+check("AUTO removing it from the file archives it",
+      p.returncode == 0 and db.execute("SELECT status FROM workflows WHERE id='vip-perks'").fetchone()[0] == "archived")
+p = subprocess.run([sys.executable, "manage.py", "workflows"], cwd=here, capture_output=True, text=True)
+check("AUTO manage.py workflows lists definitions + counts",
+      p.returncode == 0 and "welcome-sequence" in p.stdout and "enrollments:" in p.stdout, p.stderr[-200:])
+check("AUTO admin Automations page 200", get(ad, "/admin/automations").status_code == 200
+      and b"New lead welcome sequence" in get(ad, "/admin/automations").data)
+
+# 10. in-process runner: sends a new lead's welcome on its own (no cron call)
+started = email_marketing.start_runner(app, interval=30)
+post(client("10.20.0.12"), "/contact", {"name": "Rita Runner", "email": "rita@example.org", "message": "m"})
+end = time.time() + 5
+while not to("rita@example.org") and time.time() < end:
+    time.sleep(0.05)
+check("AUTO in-process runner sent the welcome within seconds (woken on enrollment)",
+      started and len(to("rita@example.org")) == 1)
+
 print()
 fails = [n for n, ok in RESULTS if not ok]
 print(f"{len(RESULTS) - len(fails)}/{len(RESULTS)} passed")

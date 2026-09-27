@@ -297,6 +297,17 @@ def init_db():
             except Exception as e:
                 sys.stderr.write(
                     f"[DB] Migration error for module {mod_info['name']}: {e}\n")
+    db.commit()
+
+    # Config-driven seed data (e.g. workflows.json -> workflows tables)
+    for mod_info in _registered_modules:
+        seed = mod_info.get('seed')
+        if seed:
+            try:
+                seed(db)
+            except Exception as e:
+                sys.stderr.write(
+                    f"[DB] Seed error for module {mod_info['name']}: {e}\n")
 
     db.commit()
     db.close()
@@ -570,17 +581,48 @@ def sync_to_crm(form_data, form_type, trusted=False):
                 (tag_id, tag_name, tag_color, now)
             )
 
-        db.execute(
+        tag_cur = db.execute(
             "INSERT OR IGNORE INTO contact_tags "
             "(contact_id, tag_id, added_at) VALUES (?, ?, ?)",
             (contact_id, tag_id, now)
         )
+        tag_is_new = tag_cur.rowcount == 1
 
         db.commit()
         app.logger.info(f"CRM sync OK: contact {contact_id} -> {form_type}")
 
     except Exception as e:
         app.logger.error(f"CRM sync failed for {form_type}: {e}")
+        return None
+
+    # Automations: enroll in every active workflow this event triggers
+    # (workflows.json). Never lets an automation problem fail the form.
+    fire_workflow_trigger(contact_id, "form_submitted", {"form_name": form_type})
+    if tag_is_new:
+        fire_workflow_trigger(contact_id, "tag_added", {"tag_name": tag_name})
+    return contact_id
+
+
+def fire_workflow_trigger(contact_id, trigger_type, context=None):
+    """Enroll a contact in the active workflows matching this trigger, then
+    wake the in-process runner so an immediate (delay 0) step goes out
+    within seconds. No-op when the workflows module is off."""
+    enroll = app.config["_helpers"].get("enroll_in_workflows")
+    if not enroll or not contact_id:
+        return 0
+    try:
+        n = enroll(get_db(), contact_id, trigger_type, context or {})
+        if n:
+            sys.stderr.write(f"[WORKFLOW] contact {contact_id[:8]} enrolled in "
+                             f"{n} workflow(s) on {trigger_type} "
+                             f"{json.dumps(context or {})}\n")
+            wake = app.config["_helpers"].get("wake_workflow_runner")
+            if wake:
+                wake()
+        return n
+    except Exception as e:
+        sys.stderr.write(f"[WORKFLOW] enrollment failed on {trigger_type}: {e}\n")
+        return 0
 
 
 def _save_form_submission(contact_email, form_type, form_data_dict,
@@ -621,39 +663,99 @@ def tg_escape(value):
     return html.escape(str(value if value is not None else ""), quote=True)
 
 
-def send_telegram(message, parse_mode=None):
-    """Send a Telegram notification. No-op if not configured.
+_TELEGRAM_TIMEOUT = float(os.environ.get("CLIENT_TELEGRAM_TIMEOUT", "5"))
+# Override only to point at a local stub in tests; production = Telegram.
+_TELEGRAM_API = os.environ.get("TELEGRAM_API_BASE", "https://api.telegram.org").rstrip("/")
+
+
+def telegram_configured():
+    return bool(cfg.CLIENT_CONFIG.get("telegram_bot_token")
+                and cfg.CLIENT_CONFIG.get("telegram_chat_id"))
+
+
+def _telegram_post(bot_token, body, timeout):
+    """The one network call (tests replace this function)."""
+    import urllib.request
+    req = urllib.request.Request(
+        f"{_TELEGRAM_API}/bot{bot_token}/sendMessage",
+        data=json.dumps(body).encode(),
+        headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return resp.status
+
+
+def _telegram_worker(bot_token, body, event):
+    try:
+        status = _telegram_post(bot_token, body, _TELEGRAM_TIMEOUT)
+        sys.stderr.write(f"[TELEGRAM] {event} alert sent (HTTP {status})\n")
+    except Exception as e:                       # never let an alert break anything
+        detail = str(e).replace(bot_token, "***")
+        sys.stderr.write(f"[TELEGRAM] {event} alert FAILED: "
+                         f"{type(e).__name__}: {detail}\n")
+
+
+def send_telegram(message, parse_mode=None, event="notification"):
+    """Fire-and-forget Telegram alert to the business owner.
+
+    Returns the sender thread (join() it in tests) or None when Telegram is
+    not configured. Never blocks the request that triggered it and never
+    raises: the POST runs on a daemon thread with a short timeout
+    (CLIENT_TELEGRAM_TIMEOUT, default 5s) and success/failure is logged.
 
     Default is PLAIN TEXT (no parse_mode): alerts carry text typed by
     anonymous visitors, and with HTML parsing a visitor could plant links in
     the operator's own alert. If you pass parse_mode="HTML", every
     interpolated value MUST go through tg_escape().
     """
-    import urllib.request
-    bot_token = cfg.CLIENT_CONFIG.get("telegram_bot_token", "")
-    chat_id = cfg.CLIENT_CONFIG.get("telegram_chat_id", "")
-    if not bot_token or not chat_id:
-        return
+    import threading
+    if not telegram_configured():
+        return None
+    bot_token = cfg.CLIENT_CONFIG["telegram_bot_token"]
+    body = {"chat_id": cfg.CLIENT_CONFIG["telegram_chat_id"],
+            "text": str(message)[:4000], "disable_web_page_preview": True}
+    if parse_mode:
+        body["parse_mode"] = parse_mode
     try:
-        body = {"chat_id": chat_id, "text": message,
-                "disable_web_page_preview": True}
-        if parse_mode:
-            body["parse_mode"] = parse_mode
-        payload = json.dumps(body).encode()
-        req = urllib.request.Request(
-            f"https://api.telegram.org/bot{bot_token}/sendMessage",
-            data=payload,
-            headers={"Content-Type": "application/json"}
-        )
-        urllib.request.urlopen(req, timeout=10)
+        t = threading.Thread(target=_telegram_worker, args=(bot_token, body, event),
+                             daemon=True, name="telegram-alert")
+        t.start()
+        return t
     except Exception as e:
-        app.logger.error(f"Telegram notification failed: {e}")
+        sys.stderr.write(f"[TELEGRAM] could not start sender: {e}\n")
+        return None
+
+
+def notify_owner(message, event="notification"):
+    """Owner alert for a business event (new lead / order / booking /
+    affiliate application). Looked up through app helpers so modules and
+    tests share one seam. Never raises."""
+    try:
+        return app.config["_helpers"]["send_telegram"](message, event=event)
+    except TypeError:                            # a replacement without event=
+        try:
+            return app.config["_helpers"]["send_telegram"](message)
+        except Exception:
+            return None
+    except Exception as e:
+        sys.stderr.write(f"[TELEGRAM] notify failed: {e}\n")
+        return None
 
 
 # ── Email ────────────────────────────────────────────────────────────────
 
+# Override only to point at a local stub in tests; production = Resend.
+_RESEND_API = os.environ.get("RESEND_API_BASE", "https://api.resend.com").rstrip("/")
+
+
+def email_configured():
+    return bool(cfg.CLIENT_CONFIG.get("resend_api_key")
+                and cfg.CLIENT_CONFIG.get("email_from"))
+
+
 def _send_email(to_addr, subject, html_body, tags=None, headers=None):
-    """Send an HTML email via Resend API. No-op if not configured."""
+    """Send an HTML email via Resend API. No-op if not configured.
+    Returns the provider id (truthy) on success, None on failure; raises
+    ValueError("rate_limited") on HTTP 429 so callers can back off."""
     import urllib.request
     import urllib.error
     api_key = cfg.CLIENT_CONFIG.get("resend_api_key", "")
@@ -677,7 +779,7 @@ def _send_email(to_addr, subject, html_body, tags=None, headers=None):
 
         data = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(
-            "https://api.resend.com/emails",
+            f"{_RESEND_API}/emails",
             data=data,
             headers={
                 "Authorization": f"Bearer {api_key}",
@@ -691,8 +793,10 @@ def _send_email(to_addr, subject, html_body, tags=None, headers=None):
     except urllib.error.HTTPError as e:
         if e.code == 429:
             raise ValueError("rate_limited")
+        sys.stderr.write(f"[EMAIL] provider rejected send: HTTP {e.code}\n")
         return None
-    except Exception:
+    except Exception as e:
+        sys.stderr.write(f"[EMAIL] send failed: {type(e).__name__}: {e}\n")
         return None
 
 
@@ -996,6 +1100,8 @@ def contact():
                 email, "contact",
                 {"name": name, "email": email, "message": message},
                 source_url=request.url)
+            preview = " ".join(message.split())[:200]
+            notify_owner(f"New lead: {name} ({email})\n{preview}", event="lead")
 
             flash("Message sent! We will be in touch.", "success")
             return redirect(url_for("contact"))
@@ -1013,6 +1119,7 @@ def register_module(module_name, module):
         'get_nav_items': getattr(module, 'get_nav_items', None),
         'get_metrics': getattr(module, 'get_metrics', None),
         'migrate': getattr(module, 'migrate', None),
+        'seed': getattr(module, 'seed', None),
     }
     _registered_modules.append(mod_info)
 
@@ -1037,6 +1144,9 @@ app.config['_helpers'] = {
     'get_db': get_db,
     'send_email': _send_email,
     'send_telegram': send_telegram,
+    'notify_owner': notify_owner,
+    'telegram_configured': telegram_configured,
+    'email_configured': email_configured,
     'tg_escape': tg_escape,
     'sync_to_crm': sync_to_crm,
     'config': cfg.CLIENT_CONFIG,
@@ -1055,6 +1165,8 @@ app.config['_rate_limited'] = _rate_limited
 if cfg.is_module_enabled("email_marketing") or cfg.is_module_enabled("workflows"):
     from modules import email_marketing
     register_module("email_marketing", email_marketing)
+    app.config['_helpers']['enroll_in_workflows'] = email_marketing.enroll_in_workflows
+    app.config['_helpers']['wake_workflow_runner'] = email_marketing.wake_runner
 
 if cfg.is_module_enabled("ecommerce"):
     from modules import ecommerce
@@ -1101,6 +1213,24 @@ if cfg.is_module_enabled("ecommerce") or \
 
 init_db()
 
+
+def start_workflow_runner():
+    """Start the in-process workflow runner (a daemon thread that sends due
+    workflow steps every CLIENT_WORKFLOW_INTERVAL seconds, default 60).
+    Called once per gunicorn worker by gunicorn.conf.py (post_worker_init)
+    and by the dev server below; NOT on plain import, so manage.py and
+    tests never send mail as a side effect. Safe with several workers:
+    each due step is claimed atomically in SQLite before it is sent.
+    Set CLIENT_WORKFLOW_RUNNER=0 to disable (then drive it with cron:
+    POST /api/process-workflows with X-Cron-Key, or manage.py run-workflows)."""
+    if os.environ.get("CLIENT_WORKFLOW_RUNNER", "1") == "0":
+        sys.stderr.write("[WORKFLOW] in-process runner disabled "
+                         "(CLIENT_WORKFLOW_RUNNER=0)\n")
+        return False
+    if not (cfg.is_module_enabled("email_marketing") or cfg.is_module_enabled("workflows")):
+        return False
+    return email_marketing.start_runner(app)
+
 if __name__ == "__main__":
     # DEVELOPMENT ONLY. Production runs under gunicorn on 127.0.0.1 via
     # ../run.sh or the systemd unit in ../deploy/ (see clone_client.sh output).
@@ -1113,4 +1243,6 @@ if __name__ == "__main__":
                  f"non-loopback host ({host}).")
     sys.stderr.write("[DEV] Werkzeug development server -- not for production. "
                      "Use ../run.sh (gunicorn) instead.\n")
+    if not debug or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
+        start_workflow_runner()
     app.run(host=host, port=port, debug=debug)

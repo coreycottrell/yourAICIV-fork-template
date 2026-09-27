@@ -6,6 +6,9 @@ shared venv's python):
     python manage.py issue-setup-link [--ttl-hours 24] [--port PORT]
     python manage.py revoke-sessions
     python manage.py status
+    python manage.py sync-workflows [--check]
+    python manage.py workflows
+    python manage.py run-workflows
 
 issue-setup-link
     Creates a SINGLE-USE set-password link (256-bit token, default 24h expiry)
@@ -21,6 +24,20 @@ revoke-sessions
 
 status
     Shows whether an admin password is set and whether a setup link is pending.
+
+sync-workflows [--check]
+    Validates app/workflows.json (the automation definitions) and loads it into
+    the database. A bad file is refused with the reason and nothing changes.
+    --check only validates. The running app picks the change up immediately
+    (it reads definitions from the database on every pass).
+
+workflows
+    Lists the workflows, their steps, enrollment counts, and whether email and
+    Telegram are configured. No contact data is printed.
+
+run-workflows
+    Sends every due workflow step once, now (the in-process runner does this
+    every minute anyway; use this to test or to drive it from cron).
 """
 
 import argparse
@@ -110,6 +127,66 @@ def status():
         print("setup link pending: no")
 
 
+def _email_module():
+    from modules import email_marketing
+    return email_marketing
+
+
+def sync_workflows_cmd(check_only):
+    em = _email_module()
+    try:
+        templates, workflows = em.load_workflow_definitions()
+    except em.WorkflowConfigError as e:
+        sys.exit(f"workflows.json is INVALID, nothing changed: {e}")
+    if check_only:
+        print(f"workflows.json OK: {len(workflows)} workflow(s), "
+              f"{len(templates)} template(s)")
+        return
+    db = sqlite3.connect(webapp.DB_PATH, timeout=30)
+    db.execute("PRAGMA busy_timeout=30000")
+    try:
+        r = em.sync_workflows(db)
+    finally:
+        db.close()
+    print(f"Loaded workflows.json: {r['workflows']} workflow(s) ({r['active']} active), "
+          f"{r['templates']} template(s), {r['archived']} archived.")
+
+
+def list_workflows():
+    db = _db()
+    db.row_factory = sqlite3.Row
+    print(f"email configured: {'yes' if webapp.email_configured() else 'NO (emails wait)'}")
+    print(f"telegram configured: {'yes' if webapp.telegram_configured() else 'no'}")
+    rows = db.execute("SELECT * FROM workflows ORDER BY status, id").fetchall()
+    if not rows:
+        print("no workflows defined")
+    for w in rows:
+        print(f"\n[{w['status']}] {w['id']}: {w['name']}")
+        print(f"  trigger: {w['trigger_type']} {w['trigger_config']}")
+        for st in db.execute("SELECT * FROM workflow_steps WHERE workflow_id = ? "
+                             "ORDER BY step_order", (w['id'],)):
+            print(f"  step {st['step_order'] + 1}: +{st['delay_minutes']}m "
+                  f"{st['action_type']} {st['action_config']}")
+        counts = dict(db.execute("SELECT status, COUNT(*) FROM workflow_enrollments "
+                                 "WHERE workflow_id = ? GROUP BY status", (w['id'],)).fetchall())
+        due = db.execute("SELECT COUNT(*) FROM workflow_enrollments WHERE workflow_id = ? "
+                         "AND status = 'active' AND next_action_at <= ?",
+                         (w['id'], datetime.now().strftime("%Y-%m-%dT%H:%M:%S"))).fetchone()[0]
+        print(f"  enrollments: {counts or 'none'}; due now: {due}")
+    sent = dict(db.execute("SELECT status, COUNT(*) FROM email_log WHERE workflow_id "
+                           "IS NOT NULL GROUP BY status").fetchall())
+    print(f"\nautomation emails logged: {sent or 'none'}")
+    db.close()
+
+
+def run_workflows():
+    em = _email_module()
+    with webapp.app.app_context():
+        h = webapp.app.config['_helpers']
+        stats = em.process_due_workflows(h['get_db'](), h)
+    print(" ".join(f"{k}={v}" for k, v in stats.items()))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -119,7 +196,20 @@ def main():
     p.add_argument("--port", type=int, default=None)
     sub.add_parser("revoke-sessions")
     sub.add_parser("status")
+    p = sub.add_parser("sync-workflows")
+    p.add_argument("--check", action="store_true")
+    sub.add_parser("workflows")
+    sub.add_parser("run-workflows")
     args = parser.parse_args()
+    if args.cmd in ("sync-workflows", "workflows", "run-workflows") and not (
+            cfg.is_module_enabled("workflows") or cfg.is_module_enabled("email_marketing")):
+        sys.exit("The workflows module is off in config.py (modules.workflows).")
+    if args.cmd == "sync-workflows":
+        return sync_workflows_cmd(args.check)
+    if args.cmd == "workflows":
+        return list_workflows()
+    if args.cmd == "run-workflows":
+        return run_workflows()
     if args.cmd == "issue-setup-link":
         if not 0 < args.ttl_hours <= 72:
             sys.exit("--ttl-hours must be between 0 and 72")

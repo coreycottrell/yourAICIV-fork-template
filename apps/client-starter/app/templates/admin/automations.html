@@ -1,0 +1,68 @@
+{% extends "admin/base.html" %}
+{% block title %}Automations{% endblock %}
+{% block admin_content %}
+<div class="page-header">
+    <h1>Automations</h1>
+</div>
+
+<p class="text-muted">These run on their own. To add, change or pause one, ask your AiCIV.</p>
+<p>
+    Email sending: <span class="badge {% if email_ok %}badge-success{% else %}badge-warning{% endif %}">{{ 'on' if email_ok else 'not set up yet: emails wait until it is' }}</span>
+    &nbsp; Telegram alerts: <span class="badge {% if telegram_ok %}badge-success{% else %}badge-warning{% endif %}">{{ 'on' if telegram_ok else 'not set up yet' }}</span>
+</p>
+
+{% for item in workflows %}
+{% set w = item.w %}
+<div class="card" style="margin-bottom: 20px;">
+    <h2>{{ w.name }}
+        <span class="badge {% if w.status == 'active' %}badge-success{% else %}badge-muted{% endif %}">{{ w.status }}</span>
+    </h2>
+    {% if w.description %}<p>{{ w.description }}</p>{% endif %}
+    <p><strong>Starts when:</strong>
+        {% if w.trigger_type == 'form_submitted' %}
+            someone submits {{ item.trigger.forms | join(', ') if item.trigger.forms else 'any form' }}
+        {% else %}
+            a contact gets the tag "{{ item.trigger.tag_name }}"
+        {% endif %}
+    </p>
+    <table class="data-table">
+        <thead><tr><th>#</th><th>When</th><th>Does</th></tr></thead>
+        <tbody>
+        {% for s in item.steps %}
+            <tr>
+                <td>{{ loop.index }}</td>
+                <td>{% if s.delay_minutes == 0 %}right away{% elif s.delay_minutes % 1440 == 0 %}+{{ s.delay_minutes // 1440 }} day(s){% elif s.delay_minutes % 60 == 0 %}+{{ s.delay_minutes // 60 }} hour(s){% else %}+{{ s.delay_minutes }} min{% endif %}{% if not loop.first %} after the previous step{% endif %}</td>
+                <td>{% if s.action_type == 'send_email' %}Email: "{{ s.subject or '(missing template)' }}"{% else %}{{ s.action_type | replace('_', ' ') }}{% endif %}</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    <p class="text-muted">
+        In progress: {{ item.counts.get('active', 0) }} &middot;
+        Finished: {{ item.counts.get('completed', 0) }} &middot;
+        Stopped (unsubscribed): {{ item.counts.get('cancelled', 0) }} &middot;
+        Errors: {{ item.counts.get('error', 0) }}
+    </p>
+</div>
+{% endfor %}
+
+{% if not workflows %}
+<p class="empty-state">No automations yet. Ask your AiCIV to set one up.</p>
+{% endif %}
+
+<h2>Recent automation emails</h2>
+<table class="data-table">
+    <thead><tr><th>When</th><th>To</th><th>Subject</th><th>Result</th></tr></thead>
+    <tbody>
+    {% for r in recent %}
+        <tr>
+            <td>{{ r.sent_at }}</td>
+            <td>{{ r.first_name or '' }} &lt;{{ r.to_email }}&gt;</td>
+            <td>{{ r.subject }}</td>
+            <td><span class="badge {% if r.status == 'sent' %}badge-success{% else %}badge-warning{% endif %}">{{ r.status }}</span></td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% if not recent %}<p class="empty-state">None yet.</p>{% endif %}
+{% endblock %}

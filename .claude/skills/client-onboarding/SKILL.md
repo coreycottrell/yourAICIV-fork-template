@@ -1,7 +1,7 @@
 ---
 name: client-onboarding
 description: "yourAICIV delivery engine operating manual. Takes a client (by default your own human partner's business) from zero to a live, branded business system: public funnel, CRM, 3-number dashboard, email automations, store, blog, affiliates, booking, with Stripe as the default payment provider. It runs the self-hosted client-starter scaffold at apps/client-starter/ through 5 phases: Intake, Provision, Customize, Verify, Hand Off. Fires from the CLIENT-ONBOARDING gate in .claude/CLAUDE.md after awakening is verified. It also fires whenever the human asks for a website, funnel, CRM, store, booking page, or a 'GoHighLevel replacement' for themselves or one of their clients, and every session that has an unfinished client under memories/clients/."
-version: 1.2.0
+version: 1.3.0
 status: provisional
 authored: 2026-09-27
 authored_by: True Bearing dev VP (template integration); playbook v1.1 by the yourAICIV team (Travis Morehead)
@@ -49,6 +49,7 @@ their business system**. This skill is how you do that the same way every time, 
 | Python venv (shared) | `apps/.venv/` | Create once (below). Gitignored. |
 | A client's running instance | `apps/{client-slug}/` | Made by `clone_client.sh`. Gitignored (secrets + customer PII). |
 | That client's config | `apps/{client-slug}/app/config.py` | In Part 2, "config.py" **always** means this file, never the scaffold's. |
+| That client's automations | `apps/{client-slug}/app/workflows.json` | **You** define/edit workflows + email templates here (no admin editor). Load with `manage.py sync-workflows` (1.10). |
 | That client's secrets | `apps/{client-slug}/.env` | Mode 0600, loaded automatically at startup (python-dotenv). The app **refuses to start** without a strong `CLIENT_SECRET_KEY` there. Never `cat`/echo it, copy it into memories, chat logs, or git. |
 | One-time admin setup link | `apps/{client-slug}/.setup-link` | Mode 0600, single use, 24h. Send privately, then delete (Step 5.1). |
 | Visitor-typed data | `apps/{client-slug}/tools/read_untrusted.py` | The ONLY way you read contact/order/booking/affiliate text (1.9). |
@@ -132,8 +133,8 @@ yet. Do not tick a Verify box on the playbook's word. Tick it on evidence.
 | # | Playbook says | Code reality | What you do |
 |---|---------------|--------------|-------------|
 | R1 | Form submit auto-tags "Website Lead" | Tags come from `tag_map` in config.py; the contact form tags **"Contact Form"** | Set `tag_map["contact"] = ("Website Lead", "#3b82f6")` in the client's config.py during Customize |
-| R2 | Form submit triggers the welcome sequence | `enroll_in_workflows()` exists in `modules/email_marketing.py` but **nothing calls it**, and the admin has **no workflow editor** (only Subscribers + Campaigns) | Treat V11 as NOT MET until you wire it *in the client instance* (never the scaffold) and prove an email lands; `/api/process-workflows` (cron-key protected) is the step runner |
-| R3 | New lead / new order sends a Telegram alert | `send_telegram()` exists in `app.py` but **nothing calls it** | Treat V10/V14 as NOT MET until wired in the instance and proven with a real received message |
+| R2 | Form submit triggers the welcome sequence | **Wired.** Every public form (contact, order, booking), a *confirmed* newsletter subscription and an admin-added subscriber go through `sync_to_crm()`, which enrolls the contact in each active workflow whose trigger matches. The default `workflows.json` ships an active 3-email welcome sequence for `contact` + `subscriber`. Due steps are sent by an in-process runner (every 60s, and within seconds of an enrollment). There is no admin *editor*: workflows are defined by you in `workflows.json` (1.10); the admin gets a read-only **Automations** page | Emails only leave once Resend is configured (`RESEND_API_KEY` + `EMAIL_FROM` in `.env`); until then due steps **wait in line** (not lost; skipped as stale after 72h). V11 still needs a real received email as evidence |
+| R3 | New lead / new order sends a Telegram alert | **Wired.** Plain-text alerts on new lead (contact form), new order, new booking and new affiliate application, when `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` are set. Fire-and-forget on a background thread with a 5s timeout: a Telegram outage never slows or fails the visitor's request. Each result is logged (`[TELEGRAM] lead alert sent (HTTP 200)` / `... FAILED: <reason>`) | Set the two `.env` values, restart the instance, submit the form. V10/V14 need a real received message as evidence; if it doesn't arrive, `grep TELEGRAM apps/{slug}/logs/app.log` shows why |
 | R4 | Start with `nohup python3 .../app.py` | That is the Werkzeug **dev** server; it is not for production | Start with gunicorn: `apps/{slug}/run.sh` (no systemd) or the rendered `apps/{slug}/deploy/client-{slug}.service` (systemd). Both bind `127.0.0.1` only |
 | R5 | App reachable on its port | gunicorn binds `127.0.0.1`; `X-Forwarded-*` is trusted only from `CLIENT_TRUSTED_PROXIES` (default loopback) | Correct for the reverse-proxy/tunnel path in Step 2.8. Never publish the port directly |
 | R6 | Public forms carry a CSRF token | Base templates also inject it via `static/js/app.js` from `<meta name="csrf-token">` | For curl tests, read the meta tag. Keep new behaviour in `static/js/app.js`: the Content-Security-Policy blocks inline `<script>` and `on*=` handlers |
@@ -142,9 +143,9 @@ yet. Do not tick a Verify box on the playbook's word. Tick it on evidence.
 | R9 | Newsletter form subscribes instantly | Public `/subscribe` is **double opt-in**; it never re-subscribes an address that opted out; every campaign/workflow email carries a working per-recipient unsubscribe link and one-click `List-Unsubscribe` | Email must be configured (Resend) or confirmations cannot go out. Legal VP owns the compliance wording |
 | R10 | Affiliates log in with email + referral code | The referral code is public, so it is not a credential. Affiliates sign in with a one-time emailed link (approved affiliates only); the admin can issue a link from the affiliate's page | Email must be configured for self-serve sign-in |
 
-Upstream fixes for R1-R3 belong in the scaffold via a reviewed template change, not in-place edits.
-Until that lands, wire them per instance and record exactly what you changed in
-`memories/clients/{client-slug}/verification-log.md`.
+R1 is still a per-instance config choice. R2/R3 are wired in the scaffold (above), so a fresh
+clone does them out of the box. Record per-instance changes (tag_map, workflows.json edits)
+in `memories/clients/{client-slug}/verification-log.md`.
 
 ### 1.7 Proven smoke test (run after every clone, before Customize)
 
@@ -203,6 +204,55 @@ to you. Rules:
 - Public forms can create a contact but never overwrite an existing contact's name, phone,
   or address (attempted changes are logged in its activity log for a human to apply).
 
+### 1.10 Automations: how they run and how you change them
+
+**The runner.** `run.sh` and the systemd unit start gunicorn with `app/gunicorn.conf.py`, whose
+`post_worker_init` hook starts one runner thread per worker. It sends due steps every 60s
+(`CLIENT_WORKFLOW_INTERVAL`) and immediately after an enrollment. Each due step is claimed
+atomically in SQLite before it is sent, so two workers (or a cron call) never send it twice.
+**It stays running as long as the instance does**, and the instance is kept up already:
+go-live starts it through `run.sh`, and `tools/watchdog.sh` (`client_sites.py ensure`, every
+minute) restarts it if it dies (systemd hosts: `Restart=on-failure`). No cron, no extra daemon.
+A restart loses nothing: due steps live in the database and go out on the first pass. For an external cron instead, set `CLIENT_WORKFLOW_RUNNER=0` and call
+`curl -X POST -H "X-Cron-Key: $CLIENT_CRON_KEY" http://127.0.0.1:<port>/api/process-workflows`.
+(The dev server `python3 app.py` also starts the runner; plain imports such as
+`manage.py` do not.)
+
+**Defining / editing workflows (you, not the human).** Edit `apps/{slug}/app/workflows.json`:
+
+```json
+"templates": {"welcome": {"subject": "Thanks for reaching out to {{business_name}}",
+                          "body_html": "<p>Hi {{first_name}}, ...</p>"}},
+"workflows": [{"id": "welcome-sequence", "name": "New lead welcome sequence", "status": "active",
+  "trigger": {"type": "form_submitted", "forms": ["contact", "subscriber"], "once_per_contact": true},
+  "steps": [{"delay": "0",  "action": "send_email", "template": "welcome"},
+            {"delay": "2d", "action": "send_email", "template": "follow-up"},
+            {"delay": "5d", "action": "send_email", "template": "value"}]}]
+```
+
+- Triggers: `form_submitted` (`forms`: `contact`, `subscriber`, `order`, `appointment`; `[]` = any)
+  or `tag_added` (`tag_name`, fires when a form auto-tags a contact, see `tag_map`).
+  `once_per_contact` (default true) means a contact never gets the same workflow twice.
+- Actions: `send_email` (a template id), `add_tag`, `remove_tag` (`tag_name`).
+- `delay` is counted from the **previous** step (`0`, `30m`, `2h`, `3d`), so the default
+  sequence is day 0, day 2, day 7.
+- `status`: `active` or `paused`. Deleting a workflow from the file archives it.
+- Merge fields: `{{first_name}}` (`there` if unknown), `{{last_name}}`, `{{email}}`,
+  `{{business_name}}`. Visitor values are HTML-escaped. The footer and one-click unsubscribe
+  are added automatically; unsubscribed contacts' sequences stop.
+
+Then load it (validates first; a bad file is refused with the reason and nothing changes):
+
+```bash
+cd ${CIV_ROOT}/apps/{slug}/app
+../../.venv/bin/python manage.py sync-workflows      # --check = validate only
+../../.venv/bin/python manage.py workflows           # definitions, enrollment counts, email/Telegram status
+../../.venv/bin/python manage.py run-workflows       # send due steps now (testing)
+```
+
+The running app picks the change up on its next pass (no restart). The file is also reloaded
+at every start (a bad file is logged and the previous definitions stay in force).
+
 ---
 
 # Part 2: The Playbook
@@ -241,7 +291,8 @@ This playbook assumes the reusable client-starter scaffold exists. The scaffold 
 - Ecommerce (products, cart, checkout, orders)
 - Blog, affiliates, appointments, shipping modules (toggle on/off)
 - Public page skeleton (landing, contact form)
-- Telegram notification helper (defined but not yet called: see Part 1, R3)
+- Telegram owner alerts: new lead, order, booking, affiliate application (Part 1, R3)
+- Automation engine: config-driven workflows (`app/workflows.json`) + in-process runner (Part 1, 1.10)
 - Payment provider framework (Stripe default; alternatives: ACH, BarterPay, ClickBrick, crypto, manual)
 - clone_client.sh: one-command standup with random secrets, port allocation, and go-live through the portal
 
@@ -403,23 +454,30 @@ Build the dashboard using the 3 metrics the client named in intake question C2. 
 
 Build the client's first automation based on intake question C3 ("When a new lead comes in, what should happen?").
 
-Enable `email_marketing` module in config.py, then configure:
+The `workflows` module is on by default and every clone ships this sequence **active** in
+`apps/<client-slug>/app/workflows.json` (Part 1, 1.10). Turn on `email_marketing` in config.py
+too if the client wants newsletters (Subscribers + Campaigns).
 
 **Standard first automation** (unless the client specified something different):
 
 ```
-Trigger: New contact added (via public form submission)
+Trigger: form_submitted, forms ["contact", "subscriber"]  (once per contact)
 Sequence:
   1. Immediately: Welcome email ("Thanks for reaching out to {business_name}...")
   2. +2 days: Follow-up email ("Just checking in -- did you have any questions about...?")
-  3. +7 days: Value email ("Here are 3 things our clients love about...")
+  3. +7 days (5 days after step 2): Value email ("Here are 3 things our clients love about...")
 ```
 
+Adapt it to intake C3: rewrite the three templates in the client's tone, change triggers or
+delays, add workflows. Then `manage.py sync-workflows`. Put `RESEND_API_KEY` and `EMAIL_FROM`
+(a sender on a domain verified in the client's Resend account) in `.env` and restart the
+instance (same `client_sites.py stop`/`start` as Step 2.7); until then emails wait in line.
+
 **Definition of done**:
-- [ ] At least one email workflow is configured and active
+- [ ] `manage.py workflows` shows at least one active workflow and `email configured: yes`
 - [ ] Email templates are populated with the client's business name and tone
-- [ ] Admin can view subscribers and campaigns
-- [ ] A test contact triggers the sequence and the email arrives (send to the AiCIV's own test address, not the client)
+- [ ] Admin can view the Automations page (and Subscribers/Campaigns if `email_marketing` is on)
+- [ ] A test contact triggers the sequence and the email arrives (send to the AiCIV's own test address, not the client); `manage.py workflows` shows `automation emails logged: {'sent': 1}`
 
 ### Step 2.6: Public Funnel -- One Landing Page
 
@@ -429,12 +487,12 @@ The scaffold provides a config-driven public home page. Edit `config.py -> site`
 - About section content
 - Features section items
 
-**On form submit** (items 1-2 wired in scaffold; 3-5 need per-instance work, see Part 1, 1.6):
+**On form submit** (all wired in the scaffold; only item 3 needs a config change, see Part 1, 1.6):
 1. Save to `contact_messages` (for admin inbox)
 2. Upsert into `contacts` (for CRM)
 3. Auto-tag with "Website Lead" (R1: set `tag_map["contact"]`; default tag is "Contact Form")
-4. Trigger the welcome email sequence from Step 2.5 (R2: not wired yet)
-5. Send Telegram notification to client: "New lead: {name} ({email})" (R3: not wired yet)
+4. Enroll in the welcome email sequence from Step 2.5 (first email within ~a minute, once email is configured)
+5. Send Telegram notification to client: "New lead: {name} ({email})" plus a message preview (once Telegram is configured, Step 2.7)
 
 **Definition of done**:
 - [ ] Landing page loads at the client's public URL
@@ -452,13 +510,19 @@ Connect the client's Telegram to their system for real-time alerts.
 - Get the client's Telegram chat_id (have them message the bot, capture from the update)
 - Set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` in the client's `.env`
 
-**Standard notification triggers**:
+Then restart the instance so it reads `.env`:
+`python3 ${CIV_ROOT}/tools/client_sites.py stop <client-slug> && python3 ${CIV_ROOT}/tools/client_sites.py start <client-slug>`.
+
+**Notification triggers** (built in, plain text, fire-and-forget with a 5s timeout; each
+attempt is logged as `[TELEGRAM] <event> alert sent` or `... FAILED: <reason>`):
 
 | Event | Message format |
 |-------|---------------|
-| New lead (form submission) | "New lead: {name} ({email}) -- {message preview}" |
-| New order | "New order #{id}: {customer} -- ${total} ({payment_method})" |
-| Unread message threshold | "You have {n} unread messages" (daily digest) |
+| New lead (contact form) | "New lead: {name} ({email})" + message preview |
+| New order | "New order #{id}: {customer} ({email}) -- ${total} ({payment_method})" + items |
+| New booking | "New booking: {name} ({email}) -- {date} {time} [{type}]" |
+| New affiliate application | "New affiliate application: {name} ({email}). Review it under Admin > Affiliates." |
+| Unread message threshold | Not built in. If the client wants a daily digest, schedule it yourself (AgentCal) from `read_untrusted.py --kind messages` counts |
 
 **Definition of done**:
 - [ ] Client receives a test Telegram message from their bot
@@ -532,7 +596,9 @@ For each product/service:
 
 ### Step 3.3: Email Templates
 
-Customize the automated email content.
+Customize the automated email content. Workflow emails are the `templates` in
+`apps/<client-slug>/app/workflows.json` (Part 1, 1.10); edit them there, then
+`manage.py sync-workflows`.
 
 - Replace placeholder copy with client-specific language
 - Match the client's tone (formal vs. casual -- infer from intake conversation)
@@ -551,7 +617,7 @@ Customize the automated email content.
 
 ### Step 3.4: Client-Specific Automations
 
-If the client described specific workflows in intake C3 beyond the standard welcome sequence, build them now using the email_marketing module's workflow engine.
+If the client described specific workflows in intake C3 beyond the standard welcome sequence, add them to `workflows.json` now (Part 1, 1.10). Only the triggers listed there exist (`form_submitted`, `tag_added`); a time-relative trigger such as "24h before a booking" or "no purchase in 30 days" is not built in, so schedule those yourself (AgentCal) or tell the client it isn't available yet.
 
 Examples from real patterns:
 - **Appointment reminder**: Booking confirmed -> reminder 24h before -> follow-up 1h after
@@ -604,7 +670,7 @@ Run these checks in order. Every check must PASS. A failure blocks handoff.
 | V3 | Add a test contact | Use admin CRM to add "Test User, test@example.com" | Contact appears in contacts list |
 | V4 | Tag a contact | Add tag "VIP" to test contact | Tag appears on contact detail page |
 | V5 | View orders | Open orders page | Page loads (empty state is OK) |
-| V6 | View automations | Open email marketing page | Subscribers/campaigns listed |
+| V6 | View automations | Open `/admin/automations` | Active workflow(s) listed with their steps |
 
 #### 4.2 Public Page Checks
 
@@ -640,7 +706,7 @@ Run these checks in order. Every check must PASS. A failure blocks handoff.
 - [ ] Test contacts and test orders cleaned up (deleted from DB) after verification
 - [ ] No console errors in the browser on any page
 - [ ] Verification log saved to `memories/clients/{client-slug}/verification-log.md`
-- [ ] V10/V11/V14 marked PASS only with a real received message/email as evidence (Part 1, R2/R3); otherwise mark them NOT MET with the reason, and tell the client honestly what is and isn't live
+- [ ] V10/V11/V14 marked PASS only with a real received message/email as evidence (Part 1, R2/R3). The code is wired; what can still be missing is configuration (`TELEGRAM_*`, `RESEND_API_KEY`/`EMAIL_FROM`, a verified sending domain). If a check fails, the reason is in `logs/app.log` (`grep -E 'TELEGRAM|WORKFLOW|EMAIL'`); mark it NOT MET with that reason and tell the client honestly what is and isn't live
 - [ ] Set `memories/clients/{client-slug}/STATUS` to `verify` when you start this phase
 
 ---
@@ -676,7 +742,7 @@ Walk the client through these 5 screens, in this order:
 1. **Dashboard**: "These are your 3 key numbers. This is what you check every morning."
 2. **Contacts/CRM**: "Everyone who reaches out to you ends up here. You can tag people, add notes, see their history."
 3. **Orders**: "When someone buys, it shows up here. You can update the status as you fulfill."
-4. **Automations**: "These emails go out automatically. You can pause or unpause them here."
+4. **Automations** (`/admin/automations`): "These emails go out automatically. Here's who is in each sequence and what went out. Want one changed or paused? Just tell me." (The page is read-only; you make the change in `workflows.json`.)
 5. **Public page**: "This is what your customers see. Share this link anywhere -- social, email, business card."
 
 ### Step 5.3: Phone Workflow
