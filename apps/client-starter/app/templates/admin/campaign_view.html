@@ -1,0 +1,61 @@
+{% extends "admin/base.html" %}
+{% block title %}Campaign: {{ campaign.subject }}{% endblock %}
+{% block admin_content %}
+<div class="page-header">
+    <h1>{{ campaign.subject }}</h1>
+    <span class="badge {% if campaign.status == 'sent' %}badge-success{% elif campaign.status == 'sending' %}badge-warning{% else %}badge-muted{% endif %}">
+        {{ campaign.status }}
+    </span>
+</div>
+
+<div class="card" style="padding: 1.5rem; margin-bottom: 1.5rem;">
+    <p><strong>Created:</strong> {{ campaign.created_at or 'N/A' }}</p>
+    <p><strong>Sent:</strong> {{ campaign.sent_at or 'Not yet' }}</p>
+    <p><strong>Recipients:</strong> {{ campaign.sent_count or 0 }}</p>
+
+    {% if campaign.status == 'draft' %}
+    <div style="margin-top: 1rem;">
+        <a href="{{ url_for('email_marketing.admin_campaign_edit', campaign_id=campaign.id) }}" class="btn btn-secondary">Edit</a>
+        <a href="{{ url_for('email_marketing.admin_campaign_send', campaign_id=campaign.id) }}" class="btn btn-primary">Send</a>
+    </div>
+    {% endif %}
+
+    {% if campaign.status == 'sending' %}
+    <div id="progress" data-progress-url="{{ url_for('email_marketing.admin_campaign_progress', campaign_id=campaign.id) }}" style="margin-top: 1rem; padding: 1rem; background: #f0f9ff; border-radius: 4px;">
+        <p>Sending in progress... <span id="progress-count">{{ campaign.sent_count or 0 }}</span> sent</p>
+    </div>
+    {% endif %}
+</div>
+
+{% if analytics.has_data %}
+<div class="card" style="padding: 1.5rem; margin-bottom: 1.5rem;">
+    <h3>Analytics</h3>
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 1rem;">
+        <div><strong>{{ analytics.total_sent }}</strong><br><small>Sent</small></div>
+        <div><strong>{{ analytics.delivered }}</strong><br><small>Delivered</small></div>
+        <div><strong>{{ analytics.unique_opens }}</strong> ({{ analytics.open_rate }}%)<br><small>Opens</small></div>
+        <div><strong>{{ analytics.unique_clicks }}</strong> ({{ analytics.click_rate }}%)<br><small>Clicks</small></div>
+        <div><strong>{{ analytics.bounces }}</strong><br><small>Bounces</small></div>
+    </div>
+</div>
+{% endif %}
+
+{% if sends %}
+<div class="card" style="padding: 1.5rem;">
+    <h3>Recipients</h3>
+    <table class="data-table">
+        <thead><tr><th>Email</th><th>Name</th><th>Status</th><th>Sent At</th></tr></thead>
+        <tbody>
+        {% for s in sends %}
+        <tr>
+            <td>{{ s.email or s.recipient_email or '' }}</td>
+            <td>{{ s.name or s.recipient_name or '' }}</td>
+            <td><span class="badge {% if s.status == 'sent' %}badge-success{% else %}badge-danger{% endif %}">{{ s.status }}</span></td>
+            <td>{{ s.sent_at or '' }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+{% endblock %}

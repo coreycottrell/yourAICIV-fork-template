@@ -1,0 +1,47 @@
+{% extends "public/base.html" %}
+{% block title %}Checkout{% endblock %}
+{% block content %}
+<div style="max-width: 600px; margin: 2rem auto; padding: 0 1rem;">
+    <h1>Checkout</h1>
+
+    <div class="card" style="padding: 1rem; margin-bottom: 1.5rem;">
+        <h3>Order Summary</h3>
+        {% for item in cart %}
+        <div style="display: flex; justify-content: space-between; padding: 0.5rem 0; border-bottom: 1px solid #eee;">
+            <span>{{ item.name }} x{{ item.qty }}</span>
+            <span>${{ "%.2f"|format(item.price * item.qty) }}</span>
+        </div>
+        {% endfor %}
+        <div style="display: flex; justify-content: space-between; padding-top: 0.75rem; font-weight: 700;">
+            <span>Total</span>
+            <span>${{ "%.2f"|format(computed_total) }}</span>
+        </div>
+    </div>
+
+    <form method="POST" class="card" style="padding: 1.5rem;">
+        <h3>Your Information</h3>
+        <div class="form-group">
+            <label for="name">Full Name</label>
+            <input type="text" id="name" name="name" required>
+        </div>
+        <div class="form-group">
+            <label for="email">Email</label>
+            <input type="email" id="email" name="email" required>
+        </div>
+        <div class="form-group">
+            <label for="phone">Phone</label>
+            <input type="tel" id="phone" name="phone">
+        </div>
+        <div class="form-group">
+            <label for="address">Shipping Address</label>
+            <textarea id="address" name="address" rows="3"></textarea>
+        </div>
+
+        <p style="color: var(--text-muted); font-size: 0.875rem; margin-bottom: 1rem;">
+            Payment will be arranged after order placement. You will receive confirmation via email.
+        </p>
+
+        <button type="submit" class="btn btn-primary" style="width: 100%; font-size: 1.1rem;">Place Order</button>
+    </form>
+</div>
+{% endblock %}

@@ -1,0 +1,32 @@
+
+# Runtime session logs — never check these in
+memories/sessions/*.jsonl
+
+# Organ-edit backups (*.bak-*) — kept on disk for rollback, NEVER shipped in the
+# genome (a fork must not birth carrying pre-edit copies of its own organs).
+# ACG Auditor-B NIT, 2026-07-09.
+*.bak-*
+
+# Runtime canon/recall scratch — self-test + incarnation output, never genome.
+mem/canon/_selftest/
+mem/recall_gaps/
+
+# yourAICIV delivery engine: per-client instances stamped by
+# apps/client-starter/clone_client.sh hold client secrets (.env) and customer
+# PII (client.db). Only the pristine scaffold + docs are genome.
+/apps/*
+!/apps/client-starter/
+!/apps/README.md
+/apps/client-starter/.env
+/apps/client-starter/.setup-link
+/apps/client-starter/logs/
+/apps/client-starter/app/client.db*
+/apps/client-starter/**/__pycache__/
+
+# Router keys (model_switch.sh peer seam; the trial-m3 flavor writes the tenant key
+# here at birth, mode 0600). Never committed, not even to a born civ's local repo.
+config/lifeboat/
+
+# Python bytecode (anywhere)
+__pycache__/
+*.pyc

@@ -1,0 +1,39 @@
+{
+  "skills": {
+    "client-onboarding": {
+      "path": ".claude/skills/client-onboarding/SKILL.md",
+      "status": "provisional",
+      "category": "delivery",
+      "applicable_agents": [
+        "primary",
+        "dev-vp",
+        "web-frontend-vp",
+        "comms-vp"
+      ],
+      "summary": "yourAICIV delivery engine: stand up a client's business system (funnel, CRM, dashboard, email automations, store, blog, affiliates, booking; Stripe default) from apps/client-starter via Intake -> Provision -> Customize -> Verify -> Hand Off.",
+      "keywords": [
+        "client",
+        "onboarding",
+        "website",
+        "landing page",
+        "funnel",
+        "crm",
+        "dashboard",
+        "ecommerce",
+        "store",
+        "blog",
+        "affiliates",
+        "appointments",
+        "booking",
+        "stripe",
+        "ghl",
+        "gohighlevel",
+        "delivery engine",
+        "clone_client"
+      ],
+      "fires_from": "CLIENT-ONBOARDING gate (.claude/CLAUDE.md), wake-up-protocol Step 6.5, on request",
+      "added": "2026-09-27"
+    }
+  },
+  "notes": "Skills registry grows as skills are created. See .claude/skills/ for SKILL.md files."
+}

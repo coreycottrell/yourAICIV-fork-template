@@ -1,0 +1,37 @@
+{% extends "public/base.html" %}
+{% block title %}Store{% endblock %}
+{% block content %}
+<div style="max-width: 1200px; margin: 2rem auto; padding: 0 1rem;">
+    <h1>Store</h1>
+
+    {% if categories %}
+    <div style="margin-bottom: 1.5rem;">
+        <a href="{{ url_for('ecommerce.store') }}" class="{% if not current_category %}active{% endif %}" style="margin-right: 0.5rem;">All</a>
+        {% for cat in categories %}
+        <a href="{{ url_for('ecommerce.store', category=cat.category) }}"
+           class="{% if current_category == cat.category %}active{% endif %}"
+           style="margin-right: 0.5rem;">{{ cat.category|capitalize }}</a>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 1.5rem;">
+        {% for p in products %}
+        <div class="card" style="padding: 1rem;">
+            {% if p.image %}
+            <img src="{{ url_for('static', filename='images/products/' + p.image) }}" alt="{{ p.name }}"
+                 style="width: 100%; height: 200px; object-fit: cover; border-radius: 4px;">
+            {% endif %}
+            <h3 style="margin-top: 0.5rem;">{{ p.name }}</h3>
+            <p style="color: var(--text-muted);">{{ p.short_description or '' }}</p>
+            <p style="font-size: 1.25rem; font-weight: 600;">${{ "%.2f"|format(p.price) }}</p>
+            <a href="{{ url_for('ecommerce.product_detail', slug=p.slug) }}" class="btn btn-primary" style="width: 100%;">View</a>
+        </div>
+        {% endfor %}
+    </div>
+
+    {% if not products %}
+    <p>No products available at this time.</p>
+    {% endif %}
+</div>
+{% endblock %}

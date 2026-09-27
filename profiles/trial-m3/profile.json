@@ -1,0 +1,38 @@
+{
+  "profile": "trial-m3",
+  "partner": "config/partner.json (brand, reseller, payment_url; copied into config/trial.json at birth)",
+  "duration_days": 7,
+  "model": "MiniMax-M3",
+  "trial_record": {
+    "rule": "$TRIAL_CONFIG_PATH, else .claude/settings.json env.TRIAL_CONFIG_PATH, else $CIV_ROOT/config/trial.json",
+    "operator_copy": "/etc/aiciv/trial.json",
+    "civ_copy": "config/trial.json",
+    "portal_env": "TRIAL_CONFIG_PATH=/etc/aiciv/trial.json",
+    "missing_operator_copy": "fails closed on a trial civ"
+  },
+  "setup": "python3 tools/apply_trial_profile.py apply",
+  "verify": "python3 tools/apply_trial_profile.py check",
+  "convert": "python3 tools/apply_trial_profile.py convert [--operator-copy PATH] [--restore-models]  (default: the recorded operator copy)",
+  "seams": {
+    "M3_ROUTER_BASE_URL": "REQUIRED. Anthropic-wire-compatible base URL of the M3 router for this tenant. Filled at provisioning; never committed.",
+    "M3_ROUTER_KEY_FILE": "REQUIRED (or M3_ROUTER_KEY). This tenant's per-actor router key. Copied to config/lifeboat/router_key.txt mode 0600; never echoed.",
+    "M3_MODEL_ID": "optional, default MiniMax-M3",
+    "TRIAL_PAYMENT_URL": "optional override; default payment_url from config/partner.json. apply refuses if neither is an https URL",
+    "TRIAL_START": "optional ISO8601 UTC, default now (birth)",
+    "TRIAL_OPERATOR_COPY": "REQUIRED in production: /etc/aiciv/trial.json (outside the civ tree; root-owned when apply runs as root). Recorded as TRIAL_CONFIG_PATH in .claude/settings.json env."
+  },
+  "writes": [
+    "config/trial.json",
+    "config/model_profile.json",
+    "config/launch_model.txt",
+    "config/router_endpoint.txt",
+    "config/peer_model_id.txt",
+    "config/lifeboat/router_key.txt",
+    "config/model_mode.json",
+    "config/model_mode.env",
+    "config/trial-m3-backup/agent-models.json",
+    ".claude/settings.json (backup .claude/settings.json.pre-trial-m3.bak)",
+    ".claude/agents/*.md model: -> inherit",
+    ".claude/CLAUDE.md trial block"
+  ]
+}

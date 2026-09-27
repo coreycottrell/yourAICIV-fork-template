@@ -1,0 +1,49 @@
+{% extends "admin/base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block admin_content %}
+
+<div class="admin-header">
+    <h1>Dashboard</h1>
+    <a href="{{ url_for('index') }}" class="btn btn-outline btn-sm" target="_blank">View Site</a>
+</div>
+
+{% if metrics %}
+<div class="stat-cards">
+    {% for m in metrics %}
+    <div class="stat-card">
+        <div class="number">{{ m.value }}</div>
+        <div class="label">{{ m.label }}</div>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+<h2 class="section-heading">Recent Messages</h2>
+{% if recent_messages %}
+<table class="admin-table">
+    <thead>
+        <tr>
+            <th>Name</th>
+            <th>Email</th>
+            <th>Message</th>
+            <th>Date</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for msg in recent_messages %}
+        <tr{% if not msg.read %} style="font-weight: bold;"{% endif %}>
+            <td>{{ msg.name }}</td>
+            <td>{{ msg.email }}</td>
+            <td>{{ msg.message[:80] }}{% if msg.message|length > 80 %}...{% endif %}</td>
+            <td>{{ msg.submitted_at[:10] if msg.submitted_at else '' }}</td>
+            <td><a href="{{ url_for('admin_messages') }}">View</a></td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="empty-state">No messages yet.</p>
+{% endif %}
+
+{% endblock %}

@@ -1,0 +1,88 @@
+{% extends "admin/base.html" %}
+{% block title %}Payment Providers - {{ cfg.admin_title }}{% endblock %}
+{% block admin_content %}
+
+<div class="page-header">
+    <h1>Payment Providers</h1>
+    <p style="color: var(--text-muted); margin-top: 8px;">
+        Configure which payment provider this site uses.
+        Change the active provider in <code>config.py</code> under <code>payment.active_provider</code>.
+    </p>
+</div>
+
+{# -- Operator Decision Marker ------------------------------------------------ #}
+<div style="background: #eff6ff; border: 2px solid #3b82f6; border-radius: 8px; padding: 20px; margin-bottom: 24px;">
+    <strong style="color: #1e40af;">OPERATOR: PAYMENT PROCESSOR</strong>
+    <p style="color: #1e3a5f; margin-top: 8px; margin-bottom: 0;">
+        The active provider is currently set to <strong>{{ active_provider }}</strong>.
+        To change it, edit <code>config.py</code> &rarr; <code>payment</code> &rarr; <code>active_provider</code>.
+        <br>
+        <strong>Stripe is the default and recommended processor.</strong>
+        Alternatives are available if a particular operator cannot use Stripe:
+        manual, ach_direct, barterpay, clickbrick, crypto.
+    </p>
+</div>
+
+{# -- Provider Cards ---------------------------------------------------------- #}
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px;">
+    {% for name, pconf in providers.items() %}
+    <div class="card" style="border: 2px solid {% if name == active_provider %}#10b981{% elif pconf.enabled %}var(--border){% else %}#e5e7eb{% endif %}; border-radius: 8px; padding: 20px; {% if not pconf.enabled %}opacity: 0.6;{% endif %}">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+            <h3 style="margin: 0;">{{ pconf.label or name }}</h3>
+            {% if name == active_provider %}
+            <span class="badge badge-success">ACTIVE</span>
+            {% elif pconf.enabled %}
+            <span class="badge badge-info">Enabled</span>
+            {% else %}
+            <span class="badge badge-muted">Disabled</span>
+            {% endif %}
+        </div>
+        <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 12px;">
+            {{ pconf.description or 'No description.' }}
+        </p>
+
+        {% if pconf.secret_key_env is defined %}
+        <p style="font-size: 0.8rem; color: var(--text-muted);">
+            Secret Key env: <code>{{ pconf.secret_key_env }}</code>
+            {% if pconf.webhook_secret_env is defined %}
+            &middot; Webhook Secret env: <code>{{ pconf.webhook_secret_env }}</code>
+            {% endif %}
+        </p>
+        {% endif %}
+
+        {% if pconf.api_key_env is defined %}
+        <p style="font-size: 0.8rem; color: var(--text-muted);">
+            API Key env: <code>{{ pconf.api_key_env }}</code>
+            {% if pconf.vendor_id is defined %}
+            &middot; Vendor ID: <code>{{ pconf.vendor_id or '(not set)' }}</code>
+            {% endif %}
+        </p>
+        {% endif %}
+
+        {% if pconf.merchant_url is defined %}
+        <p style="font-size: 0.8rem; color: var(--text-muted);">
+            Merchant URL: <code>{{ pconf.merchant_url or '(not set)' }}</code>
+        </p>
+        {% endif %}
+
+        {% if pconf.wallet_address is defined %}
+        <p style="font-size: 0.8rem; color: var(--text-muted);">
+            Wallet: <code>{{ pconf.wallet_address or '(not set)' }}</code>
+            &middot; Coins: {{ pconf.accepted_coins | join(', ') if pconf.accepted_coins else '(not set)' }}
+        </p>
+        {% endif %}
+    </div>
+    {% endfor %}
+</div>
+
+<div style="margin-top: 24px; padding: 16px; background: #f1f5f9; border-radius: 8px; font-size: 0.9rem; color: var(--text-muted);">
+    <strong>How to add a new provider:</strong>
+    <ol style="margin: 8px 0 0 20px;">
+        <li>Add its config block to <code>config.py</code> under <code>payment.providers</code></li>
+        <li>Create a provider class in <code>modules/payments.py</code> extending <code>PaymentProvider</code></li>
+        <li>Register it in <code>PROVIDER_CLASSES</code> dict</li>
+        <li>Set <code>payment.active_provider</code> to the new provider name</li>
+    </ol>
+</div>
+
+{% endblock %}

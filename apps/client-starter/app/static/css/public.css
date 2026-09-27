@@ -1,0 +1,211 @@
+/* ── Client-Starter: Public Stylesheet ───────────────────────────────────
+   Minimal skeleton.  Replace or extend with client branding.
+   ──────────────────────────────────────────────────────────────────────── */
+
+:root {
+    --primary:       #1e40af;
+    --primary-light: #3b82f6;
+    --text:          #1e293b;
+    --text-muted:    #64748b;
+    --bg:            #ffffff;
+    --border:        #e2e8f0;
+    --font:          'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --radius:        8px;
+    --shadow:        0 2px 12px rgba(0,0,0,0.06);
+    --transition:    all 0.2s ease;
+}
+
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+    font-family: var(--font);
+    color: var(--text);
+    background: var(--bg);
+    line-height: 1.7;
+    -webkit-font-smoothing: antialiased;
+}
+img { max-width: 100%; height: auto; display: block; }
+a { color: var(--primary-light); text-decoration: none; transition: var(--transition); }
+a:hover { color: var(--primary); }
+
+h1, h2, h3 { font-weight: 700; line-height: 1.2; color: var(--text); }
+h1 { font-size: 2.5rem; }
+h2 { font-size: 1.8rem; }
+
+.container { max-width: 1200px; margin: 0 auto; padding: 0 24px; }
+.container-sm { max-width: 700px; margin: 0 auto; padding: 0 24px; }
+.section { padding: 60px 0; }
+
+/* ── Navbar ──────────────────────────────────────────────────────────── */
+.navbar {
+    background: var(--primary);
+    position: sticky;
+    top: 0;
+    z-index: 1000;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+.nav-inner {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 0 24px;
+    height: 64px;
+}
+.nav-logo { color: #fff; font-weight: 700; font-size: 1.1rem; }
+.nav-logo:hover { color: #fff; }
+.nav-links { display: flex; gap: 4px; }
+.nav-links a { color: rgba(255,255,255,0.85); padding: 8px 16px; border-radius: var(--radius); font-size: 0.9rem; }
+.nav-links a:hover { background: rgba(255,255,255,0.12); color: #fff; }
+
+/* ── Hero ────────────────────────────────────────────────────────────── */
+.hero {
+    background: linear-gradient(135deg, var(--primary) 0%, var(--primary-light) 100%);
+    color: #fff;
+    text-align: center;
+    padding: 100px 24px;
+}
+.hero h1 { color: #fff; font-size: 3rem; margin-bottom: 16px; }
+.hero .tagline { color: rgba(255,255,255,0.8); font-size: 1.2rem; margin-bottom: 32px; }
+
+/* ── Buttons ─────────────────────────────────────────────────────────── */
+.btn {
+    display: inline-block;
+    padding: 12px 28px;
+    border: 2px solid transparent;
+    border-radius: var(--radius);
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: var(--transition);
+}
+.btn-primary { background: #fff; color: var(--primary); }
+.btn-primary:hover { background: rgba(255,255,255,0.9); color: var(--primary); }
+.btn-lg { padding: 16px 36px; font-size: 1.05rem; }
+
+/* ── Forms ────────────────────────────────────────────────────────────── */
+.form-group { margin-bottom: 16px; }
+.form-group label { display: block; font-weight: 600; font-size: 0.9rem; margin-bottom: 6px; }
+.form-group input,
+.form-group textarea,
+.form-group select {
+    width: 100%;
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    font-size: 0.95rem;
+    font-family: var(--font);
+}
+.form-group input:focus,
+.form-group textarea:focus { outline: none; border-color: var(--primary-light); box-shadow: 0 0 0 3px rgba(59,130,246,0.15); }
+.form-group textarea { min-height: 120px; resize: vertical; }
+.contact-form .btn { margin-top: 8px; background: var(--primary); color: #fff; border-color: var(--primary); }
+.contact-form .btn:hover { background: var(--primary-light); border-color: var(--primary-light); }
+
+/* ── Flash ────────────────────────────────────────────────────────────── */
+.flash { padding: 12px 18px; border-radius: var(--radius); margin-bottom: 16px; font-size: 0.9rem; }
+.flash-success { background: rgba(16,185,129,0.08); color: #059669; border: 1px solid rgba(16,185,129,0.2); }
+.flash-error { background: rgba(239,68,68,0.08); color: #dc2626; border: 1px solid rgba(239,68,68,0.2); }
+
+/* ── Footer ──────────────────────────────────────────────────────────── */
+.site-footer {
+    background: var(--text);
+    color: rgba(255,255,255,0.6);
+    text-align: center;
+    padding: 24px;
+    font-size: 0.85rem;
+}
+
+/* ── Section Variants ────────────────────────────────────────────────── */
+.section-heading {
+    text-align: center;
+    margin-bottom: 40px;
+    font-size: 1.8rem;
+}
+.text-section {
+    max-width: 800px;
+    margin: 0 auto;
+    text-align: center;
+}
+.section-content {
+    color: var(--text-muted);
+    font-size: 1.05rem;
+    line-height: 1.8;
+}
+.section-alt {
+    background: #f8fafc;
+}
+
+/* ── Features Grid ──────────────────────────────────────────────────── */
+.features-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 32px;
+}
+.feature-card {
+    background: #fff;
+    border-radius: var(--radius);
+    padding: 32px 24px;
+    text-align: center;
+    box-shadow: var(--shadow);
+    transition: var(--transition);
+}
+.feature-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.08);
+}
+.feature-card h3 {
+    margin: 16px 0 8px;
+    font-size: 1.1rem;
+}
+.feature-card p {
+    color: var(--text-muted);
+    font-size: 0.95rem;
+}
+.feature-icon {
+    font-size: 2rem;
+    margin-bottom: 8px;
+}
+
+/* ── CTA Section ────────────────────────────────────────────────────── */
+.section-cta {
+    background: linear-gradient(135deg, var(--primary) 0%, var(--primary-light) 100%);
+    color: #fff;
+    padding: 80px 24px;
+}
+.section-cta .btn-primary {
+    background: #fff;
+    color: var(--primary);
+}
+
+/* ── Logo in Navbar ─────────────────────────────────────────────────── */
+.nav-logo-img {
+    height: 36px;
+    width: auto;
+}
+
+/* ── Footer Links ───────────────────────────────────────────────────── */
+.footer-links {
+    margin-top: 12px;
+    display: flex;
+    justify-content: center;
+    gap: 16px;
+}
+.footer-links a {
+    color: rgba(255,255,255,0.6);
+    font-size: 0.85rem;
+}
+.footer-links a:hover {
+    color: rgba(255,255,255,0.9);
+}
+
+/* ── Responsive ──────────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+    h1 { font-size: 2rem; }
+    .hero { padding: 60px 20px; }
+    .hero h1 { font-size: 2rem; }
+    .features-grid { grid-template-columns: 1fr; gap: 20px; }
+    .section { padding: 40px 0; }
+    .section-cta { padding: 50px 20px; }
+}

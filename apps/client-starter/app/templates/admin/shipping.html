@@ -1,0 +1,29 @@
+{% extends "admin/base.html" %}
+{% block title %}Shipping{% endblock %}
+{% block admin_content %}
+<div class="page-header">
+    <h1>Shipping</h1>
+</div>
+
+<table class="data-table">
+    <thead>
+        <tr><th>Order</th><th>Carrier</th><th>Tracking</th><th>Status</th><th>Created</th></tr>
+    </thead>
+    <tbody>
+        {% for s in shipments %}
+        <tr>
+            <td>{{ s.order_id or 'N/A' }}</td>
+            <td>{{ s.carrier }} {{ s.service }}</td>
+            <td>{{ s.tracking_number or '-' }}</td>
+            <td><span class="badge">{{ s.status }}</span></td>
+            <td>{{ s.created_at or '' }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% if not shipments %}<p class="empty-state">No shipments yet. Shipments are created when orders are processed.</p>{% endif %}
+
+<div class="card" style="padding: 1rem; margin-top: 1.5rem;">
+    <p><em>STUB: Full Shippo API integration (rate calculation, label generation, tracking) will be implemented in a future phase.</em></p>
+</div>
+{% endblock %}

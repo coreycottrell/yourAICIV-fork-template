@@ -1,0 +1,42 @@
+{% extends "admin/base.html" %}
+{% block title %}Orders{% endblock %}
+{% block admin_content %}
+<div class="page-header">
+    <h1>Orders</h1>
+</div>
+
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>Order ID</th>
+            <th>Customer</th>
+            <th>Total</th>
+            <th>Status</th>
+            <th>Date</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for o in orders %}
+        <tr>
+            <td><a href="{{ url_for('ecommerce.admin_order_detail', order_id=o.id) }}">{{ o.id[:8] }}...</a></td>
+            <td>{{ o.customer_name or 'N/A' }}<br><small>{{ o.customer_email or '' }}</small></td>
+            <td>${{ "%.2f"|format(o.total) }}</td>
+            <td>
+                <span class="badge {% if o.status == 'completed' %}badge-success{% elif o.status == 'pending' %}badge-warning{% else %}badge-muted{% endif %}">
+                    {{ o.status }}
+                </span>
+            </td>
+            <td>{{ o.created_at or '' }}</td>
+            <td>
+                <a href="{{ url_for('ecommerce.admin_order_detail', order_id=o.id) }}" class="btn btn-sm">View</a>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+{% if not orders %}
+<p class="empty-state">No orders yet.</p>
+{% endif %}
+{% endblock %}

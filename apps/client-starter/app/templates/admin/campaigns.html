@@ -1,0 +1,48 @@
+{% extends "admin/base.html" %}
+{% block title %}Campaigns{% endblock %}
+{% block admin_content %}
+<div class="page-header">
+    <h1>Email Campaigns</h1>
+    <a href="{{ url_for('email_marketing.admin_campaign_new') }}" class="btn btn-primary">New Campaign</a>
+</div>
+
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>Subject</th>
+            <th>Status</th>
+            <th>Sent</th>
+            <th>Created</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for c in campaigns %}
+        <tr>
+            <td><a href="{{ url_for('email_marketing.admin_campaign_view', campaign_id=c.id) }}">{{ c.subject }}</a></td>
+            <td>
+                <span class="badge {% if c.status == 'sent' %}badge-success{% elif c.status == 'sending' %}badge-warning{% else %}badge-muted{% endif %}">
+                    {{ c.status }}
+                </span>
+            </td>
+            <td>{{ c.sent_count or 0 }}</td>
+            <td>{{ c.created_at or '' }}</td>
+            <td>
+                {% if c.status == 'draft' %}
+                <a href="{{ url_for('email_marketing.admin_campaign_edit', campaign_id=c.id) }}" class="btn btn-sm">Edit</a>
+                <a href="{{ url_for('email_marketing.admin_campaign_send', campaign_id=c.id) }}" class="btn btn-sm btn-primary">Send</a>
+                {% endif %}
+                <form method="POST" action="{{ url_for('email_marketing.admin_campaign_delete', campaign_id=c.id) }}" style="display: inline;"
+                      data-confirm="Delete this campaign?">
+                    <button type="submit" class="btn btn-sm btn-danger">Del</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+{% if not campaigns %}
+<p class="empty-state">No campaigns yet. <a href="{{ url_for('email_marketing.admin_campaign_new') }}">Create one</a>.</p>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,21 @@
+{% extends "public/base.html" %}
+{% block title %}Confirm Subscription{% endblock %}
+{% block content %}
+<div style="max-width: 500px; margin: 4rem auto; text-align: center; padding: 2rem;">
+    {% if state == 'ask' %}
+    <h1>Confirm your subscription</h1>
+    <p>Click below to start receiving emails from {{ cfg.business_name }}.</p>
+    <form method="POST">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-primary">Yes, subscribe me</button>
+    </form>
+    {% elif state == 'done' %}
+    <h1>You're subscribed</h1>
+    <p>Thanks for confirming. Every email includes a one-click unsubscribe link.</p>
+    {% else %}
+    <h1>Invalid Link</h1>
+    <p>This confirmation link is invalid, already used, or expired.</p>
+    {% endif %}
+    <p><a href="{{ url_for('index') }}">Return to homepage</a></p>
+</div>
+{% endblock %}

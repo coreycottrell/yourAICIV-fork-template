@@ -1,0 +1,83 @@
+{% extends "public/base.html" %}
+{% block title %}{{ cfg.business_name }}{% endblock %}
+{% block og_title %}{{ cfg.business_name }} - {{ cfg.tagline }}{% endblock %}
+
+{% block content %}
+
+{# ── Hero Section (config-driven) ────────────────────────────────────── #}
+{% set hero = cfg.site.hero %}
+<section class="hero"
+    {% if hero.background_image %}
+    style="background: linear-gradient(rgba(0,0,0,0.5), rgba(0,0,0,0.5)), url('{{ url_for('static', filename=hero.background_image) }}') center/cover no-repeat;"
+    {% endif %}>
+    <div class="container">
+        <h1>{{ hero.heading or cfg.business_name }}</h1>
+        <p class="tagline">{{ hero.subheading or cfg.tagline }}</p>
+        {% if hero.cta_text %}
+        <a href="{{ hero.cta_url or url_for('contact') }}" class="btn btn-primary btn-lg">
+            {{ hero.cta_text }}
+        </a>
+        {% endif %}
+    </div>
+</section>
+
+{# ── Dynamic Sections (rendered in config order) ─────────────────────── #}
+{% for section in cfg.site.sections %}
+
+    {# ── Text Section ──────────────────────────────────────────────── #}
+    {% if section.type == "text" %}
+    <section class="section">
+        <div class="container text-section">
+            {% if section.heading %}
+            <h2 class="section-heading">{{ section.heading }}</h2>
+            {% endif %}
+            <div class="section-content">{{ section.content }}</div>
+        </div>
+    </section>
+
+    {# ── Features Section ──────────────────────────────────────────── #}
+    {% elif section.type == "features" %}
+    <section class="section section-alt">
+        <div class="container">
+            {% if section.heading %}
+            <h2 class="section-heading">{{ section.heading }}</h2>
+            {% endif %}
+            <div class="features-grid">
+                {% for item in section['items'] %}
+                <div class="feature-card">
+                    {% if item.icon %}
+                    <div class="feature-icon">{{ item.icon }}</div>
+                    {% endif %}
+                    <h3>{{ item.title }}</h3>
+                    <p>{{ item.description }}</p>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </section>
+
+    {# ── CTA Section ───────────────────────────────────────────────── #}
+    {% elif section.type == "cta" %}
+    <section class="section section-cta">
+        <div class="container" style="text-align: center;">
+            {% if section.heading %}
+            <h2 class="section-heading" style="color: #fff;">{{ section.heading }}</h2>
+            {% endif %}
+            {% if section.content %}
+            <p style="color: rgba(255,255,255,0.85); max-width: 600px; margin: 0 auto 24px;">
+                {{ section.content }}
+            </p>
+            {% endif %}
+            {% if section.cta_text %}
+            <a href="{{ section.cta_url or url_for('contact') }}" class="btn btn-primary btn-lg">
+                {{ section.cta_text }}
+            </a>
+            {% endif %}
+        </div>
+    </section>
+
+    {% endif %}
+
+{% endfor %}
+
+{% endblock %}

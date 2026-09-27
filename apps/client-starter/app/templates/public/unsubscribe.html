@@ -1,0 +1,15 @@
+{% extends "public/base.html" %}
+{% block title %}Unsubscribe{% endblock %}
+{% block content %}
+<div style="max-width: 500px; margin: 4rem auto; text-align: center; padding: 2rem;">
+    {% if success %}
+    <h1>Unsubscribed</h1>
+    <p>{{ email }} has been removed from our mailing list.</p>
+    <p>You will no longer receive marketing emails from us.</p>
+    {% else %}
+    <h1>Invalid Link</h1>
+    <p>This unsubscribe link is invalid or has already been used.</p>
+    {% endif %}
+    <p><a href="{{ url_for('index') }}">Return to homepage</a></p>
+</div>
+{% endblock %}

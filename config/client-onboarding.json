@@ -1,0 +1,7 @@
+{
+  "_comment": "yourAICIV delivery engine switch. Read by the CLIENT-ONBOARDING gate in .claude/CLAUDE.md and by .claude/skills/client-onboarding/SKILL.md. enabled=false keeps the gate inactive (the skill still works on request). first_client='self' means the human partner's own business is client #1; set a lowercase-hyphenated slug to pre-name a different client.",
+  "enabled": true,
+  "first_client": "self",
+  "scaffold": "apps/client-starter",
+  "port_range": [5100, 5199]
+}

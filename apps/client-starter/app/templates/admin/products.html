@@ -1,0 +1,43 @@
+{% extends "admin/base.html" %}
+{% block title %}Products{% endblock %}
+{% block admin_content %}
+<div class="page-header">
+    <h1>Products</h1>
+    <a href="{{ url_for('ecommerce.admin_product_new') }}" class="btn btn-primary">New Product</a>
+</div>
+
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>Name</th>
+            <th>Price</th>
+            <th>Category</th>
+            <th>In Stock</th>
+            <th>Featured</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for p in products %}
+        <tr>
+            <td>{{ p.name }}</td>
+            <td>${{ "%.2f"|format(p.price) }}</td>
+            <td>{{ p.category }}</td>
+            <td>{{ 'Yes' if p.in_stock else 'No' }}</td>
+            <td>{{ 'Yes' if p.featured else 'No' }}</td>
+            <td>
+                <a href="{{ url_for('ecommerce.admin_product_edit', product_id=p.id) }}" class="btn btn-sm">Edit</a>
+                <form method="POST" action="{{ url_for('ecommerce.admin_product_delete', product_id=p.id) }}" style="display: inline;"
+                      data-confirm="Delete this product?">
+                    <button type="submit" class="btn btn-sm btn-danger">Del</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+{% if not products %}
+<p class="empty-state">No products yet. <a href="{{ url_for('ecommerce.admin_product_new') }}">Add one</a>.</p>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,65 @@
+{% extends "admin/base.html" %}
+{% block title %}{{ 'Edit' if product else 'New' }} Product{% endblock %}
+{% block admin_content %}
+<div class="page-header">
+    <h1>{{ 'Edit' if product else 'New' }} Product</h1>
+</div>
+
+<form method="POST" class="card" style="padding: 1.5rem; max-width: 700px;">
+    {% if not product %}
+    <div class="form-group">
+        <label for="id">Product ID (optional)</label>
+        <input type="text" id="id" name="id" placeholder="Auto-generated if blank">
+    </div>
+    {% endif %}
+
+    <div class="form-group">
+        <label for="name">Name</label>
+        <input type="text" id="name" name="name" value="{{ product.name if product else '' }}" required>
+    </div>
+
+    <div class="form-group">
+        <label for="slug">URL Slug</label>
+        <input type="text" id="slug" name="slug" value="{{ product.slug if product else '' }}" required
+               placeholder="e.g. my-awesome-product">
+    </div>
+
+    <div class="form-group">
+        <label for="price">Price</label>
+        <input type="number" id="price" name="price" step="0.01" value="{{ product.price if product else '0' }}" required>
+    </div>
+
+    <div class="form-group">
+        <label for="category">Category</label>
+        <input type="text" id="category" name="category" value="{{ product.category if product else 'general' }}">
+    </div>
+
+    <div class="form-group">
+        <label for="short_description">Short Description</label>
+        <input type="text" id="short_description" name="short_description" value="{{ product.short_description if product else '' }}">
+    </div>
+
+    <div class="form-group">
+        <label for="description">Full Description</label>
+        <textarea id="description" name="description" rows="8">{{ product.description if product else '' }}</textarea>
+    </div>
+
+    <div class="form-group">
+        <label for="sort_order">Sort Order</label>
+        <input type="number" id="sort_order" name="sort_order" value="{{ product.sort_order if product else 0 }}">
+    </div>
+
+    <div class="form-group">
+        <label><input type="checkbox" name="in_stock" {{ 'checked' if not product or product.in_stock }}> In Stock</label>
+    </div>
+
+    <div class="form-group">
+        <label><input type="checkbox" name="featured" {{ 'checked' if product and product.featured }}> Featured</label>
+    </div>
+
+    <div style="margin-top: 1rem;">
+        <button type="submit" class="btn btn-primary">{{ 'Update' if product else 'Create' }}</button>
+        <a href="{{ url_for('ecommerce.admin_products') }}" class="btn btn-secondary">Cancel</a>
+    </div>
+</form>
+{% endblock %}

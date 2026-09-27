@@ -1,0 +1,56 @@
+{% extends "admin/base.html" %}
+{% block title %}Affiliate: {{ aff.name }}{% endblock %}
+{% block admin_content %}
+<div class="page-header">
+    <h1>{{ aff.name }}</h1>
+    <span class="badge {% if aff.status == 'approved' %}badge-success{% elif aff.status == 'pending' %}badge-warning{% else %}badge-danger{% endif %}">{{ aff.status }}</span>
+</div>
+
+<div class="card" style="padding: 1.5rem; margin-bottom: 1.5rem;">
+    <p><strong>Email:</strong> {{ aff.email }}</p>
+    <p><strong>Referral Code:</strong> <code>{{ aff.referral_code }}</code></p>
+    <p><strong>Commission Rate:</strong> {{ (aff.commission_rate * 100)|int }}%</p>
+    <p><strong>Clicks (30d):</strong> {{ clicks_30d }}</p>
+    <p><strong>Total Sales:</strong> {{ aff.total_sales }}</p>
+    <p><strong>Revenue Generated:</strong> ${{ "%.2f"|format(aff.total_revenue) }}</p>
+    <p><strong>Total Earned:</strong> ${{ "%.2f"|format(aff.total_earned) }}</p>
+    <p><strong>Pending Payout:</strong> ${{ "%.2f"|format(pending) }}</p>
+
+    <div style="margin-top: 1rem;">
+        {% if aff.status == 'pending' %}
+        <form method="POST" action="{{ url_for('affiliates.admin_affiliate_approve', aff_id=aff.id) }}" style="display: inline;">
+            <button type="submit" class="btn btn-primary">Approve</button>
+        </form>
+        {% endif %}
+        {% if aff.status == 'approved' %}
+        <form method="POST" action="{{ url_for('affiliates.admin_affiliate_login_link', aff_id=aff.id) }}" style="display: inline;">
+            <button type="submit" class="btn">One-time sign-in link</button>
+        </form>
+        {% endif %}
+        {% if aff.status != 'suspended' %}
+        <form method="POST" action="{{ url_for('affiliates.admin_affiliate_suspend', aff_id=aff.id) }}" style="display: inline;">
+            <button type="submit" class="btn btn-danger">Suspend</button>
+        </form>
+        {% endif %}
+    </div>
+</div>
+
+{% if commissions %}
+<div class="card" style="padding: 1.5rem;">
+    <h3>Commissions</h3>
+    <table class="data-table">
+        <thead><tr><th>Order</th><th>Amount</th><th>Commission</th><th>Status</th></tr></thead>
+        <tbody>
+        {% for c in commissions %}
+        <tr>
+            <td>{{ c.order_id or 'N/A' }}</td>
+            <td>${{ "%.2f"|format(c.order_total) }}</td>
+            <td>${{ "%.2f"|format(c.commission_amount) }}</td>
+            <td><span class="badge">{{ c.status }}</span></td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+{% endblock %}

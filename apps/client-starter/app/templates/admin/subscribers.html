@@ -1,0 +1,80 @@
+{% extends "admin/base.html" %}
+{% block title %}Subscribers{% endblock %}
+{% block admin_content %}
+<div class="page-header">
+    <h1>Email Subscribers</h1>
+    <span class="badge">{{ active_count }} active</span>
+</div>
+
+<div class="card" style="margin-bottom: 1.5rem; padding: 1rem;">
+    <h3>Add Subscriber</h3>
+    <form method="POST" action="{{ url_for('email_marketing.admin_subscriber_add') }}" class="form-inline">
+        <input type="email" name="email" placeholder="Email" required style="margin-right: 0.5rem;">
+        <input type="text" name="name" placeholder="Name" style="margin-right: 0.5rem;">
+        <input type="text" name="phone" placeholder="Phone" style="margin-right: 0.5rem;">
+        <input type="text" name="tags" placeholder="Tags (comma-separated)" style="margin-right: 0.5rem;">
+        <button type="submit" class="btn btn-primary">Add</button>
+    </form>
+</div>
+
+{% if all_tags %}
+<div style="margin-bottom: 1rem;">
+    <strong>Filter by tag:</strong>
+    <a href="{{ url_for('email_marketing.admin_subscribers') }}" class="{% if not current_tag %}active{% endif %}">All</a>
+    {% for tag in all_tags %}
+    | <a href="{{ url_for('email_marketing.admin_subscribers', tag=tag) }}" class="{% if current_tag == tag %}active{% endif %}">{{ tag }}</a>
+    {% endfor %}
+</div>
+{% endif %}
+
+<div style="margin-bottom: 1rem;">
+    <a href="{{ url_for('email_marketing.admin_subscribers_export') }}" class="btn btn-secondary">Export CSV</a>
+</div>
+
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>Email</th>
+            <th>Name</th>
+            <th>Tags</th>
+            <th>Source</th>
+            <th>Status</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for s in subscribers %}
+        <tr>
+            <td>{{ s.email }}</td>
+            <td>{{ s.name or '' }}</td>
+            <td>
+                {% set stags = [] %}
+                {% if s.tags %}{% set stags = s.tags | tojson | default('[]') %}{% endif %}
+                {{ s.tags or '' }}
+            </td>
+            <td>{{ s.source }}</td>
+            <td>
+                {% if s.subscribed %}
+                <span class="badge badge-success">Active</span>
+                {% else %}
+                <span class="badge badge-muted">Unsubscribed</span>
+                {% endif %}
+            </td>
+            <td>
+                <form method="POST" action="{{ url_for('email_marketing.admin_subscriber_toggle', sub_id=s.id) }}" style="display: inline;">
+                    <button type="submit" class="btn btn-sm">{{ 'Unsub' if s.subscribed else 'Resub' }}</button>
+                </form>
+                <form method="POST" action="{{ url_for('email_marketing.admin_subscriber_delete', sub_id=s.id) }}" style="display: inline;"
+                      data-confirm="Delete this subscriber?">
+                    <button type="submit" class="btn btn-sm btn-danger">Del</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+{% if not subscribers %}
+<p class="empty-state">No subscribers yet.</p>
+{% endif %}
+{% endblock %}

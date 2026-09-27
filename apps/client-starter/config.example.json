@@ -1,0 +1,109 @@
+{
+    "_comment": "Copy this to inform your config.py edits. All per-client variation is in app/config.py.",
+
+    "business_name": "Acme Business",
+    "domain": "example.com",
+    "tagline": "Your tagline here",
+    "admin_title": "Admin Panel",
+
+    "colors": {
+        "primary":       "#1e40af",
+        "primary_light": "#3b82f6",
+        "primary_mid":   "#6b7faa",
+        "secondary":     "#d97706",
+        "background":    "#f5f5f5",
+        "sidebar_bg":    "#1e293b",
+        "sidebar_text":  "#e2e8f0",
+        "text":          "#1e293b",
+        "text_muted":    "#64748b",
+        "public_bg":     "#ffffff",
+        "card_bg":       "#ffffff",
+        "border":        "#e2e8f0"
+    },
+
+    "modules": {
+        "crm":             true,
+        "email_marketing": false,
+        "workflows":       false,
+        "ecommerce":       false,
+        "blog":            false,
+        "affiliates":      false,
+        "shipping":        false,
+        "appointments":    false,
+        "subscriptions":   false
+    },
+
+    "site": {
+        "seo": {
+            "title_suffix": " | Acme Business",
+            "meta_description": "Acme Business - your description here.",
+            "og_image": "",
+            "og_type": "website",
+            "robots": "index, follow"
+        },
+        "hero": {
+            "heading": "Welcome to Acme Business",
+            "subheading": "Your tagline here",
+            "cta_text": "Get Started",
+            "cta_url": "/contact",
+            "background_image": ""
+        },
+        "sections": [
+            {
+                "type": "text",
+                "heading": "About Us",
+                "content": "Tell your visitors about your business."
+            },
+            {
+                "type": "features",
+                "heading": "What We Offer",
+                "items": [
+                    {"title": "Feature 1", "description": "Describe feature one."},
+                    {"title": "Feature 2", "description": "Describe feature two."},
+                    {"title": "Feature 3", "description": "Describe feature three."}
+                ]
+            },
+            {
+                "type": "cta",
+                "heading": "Ready to get started?",
+                "content": "Reach out today.",
+                "cta_text": "Contact Us",
+                "cta_url": "/contact"
+            }
+        ],
+        "nav_links": [],
+        "footer": {
+            "text": "",
+            "links": []
+        }
+    },
+
+    "payment": {
+        "_note": "Stripe is the default/recommended processor. Alternatives available if needed.",
+        "active_provider": "stripe",
+        "providers": {
+            "stripe": {"enabled": true, "label": "Credit / Debit Card (Stripe)"},
+            "manual": {"enabled": true, "label": "Pay Later / Invoice"},
+            "ach_direct": {"enabled": false, "label": "ACH Bank Transfer"},
+            "barterpay": {"enabled": false, "label": "BarterPay"},
+            "clickbrick": {"enabled": false, "label": "ClickBrick ACH"},
+            "crypto": {"enabled": false, "label": "Cryptocurrency"}
+        }
+    },
+
+    "env_vars_needed": [
+        "CLIENT_ADMIN_USER",
+        "CLIENT_ADMIN_PASS",
+        "CLIENT_SECRET_KEY",
+        "STRIPE_SECRET_KEY    (Stripe API secret key -- default payment)",
+        "STRIPE_WEBHOOK_SECRET (Stripe webhook signing secret)",
+        "RESEND_API_KEY       (if email_marketing enabled)",
+        "EMAIL_FROM           (if email_marketing enabled)",
+        "TELEGRAM_BOT_TOKEN   (optional notifications)",
+        "TELEGRAM_CHAT_ID     (optional notifications)",
+        "CLIENT_CRON_KEY      (optional API protection)",
+        "ACH_API_KEY          (if ach_direct payment)",
+        "BARTERPAY_API_KEY    (if barterpay payment)",
+        "CLICKBRICK_API_KEY   (if clickbrick payment)"
+    ]
+}

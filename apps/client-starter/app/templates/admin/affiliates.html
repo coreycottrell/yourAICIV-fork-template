@@ -1,0 +1,31 @@
+{% extends "admin/base.html" %}
+{% block title %}Affiliates{% endblock %}
+{% block admin_content %}
+<div class="page-header">
+    <h1>Affiliates</h1>
+    {% if pending_count %}<span class="badge badge-warning">{{ pending_count }} pending</span>{% endif %}
+</div>
+
+<div style="margin-bottom: 1rem;">
+    <strong>Total commissions earned:</strong> ${{ "%.2f"|format(total_commissions) }}
+</div>
+
+<table class="data-table">
+    <thead>
+        <tr><th>Name</th><th>Code</th><th>Status</th><th>Sales</th><th>Earned</th><th>Actions</th></tr>
+    </thead>
+    <tbody>
+        {% for a in affiliates %}
+        <tr>
+            <td>{{ a.name }}<br><small>{{ a.email }}</small></td>
+            <td><code>{{ a.referral_code }}</code></td>
+            <td><span class="badge {% if a.status == 'approved' %}badge-success{% elif a.status == 'pending' %}badge-warning{% else %}badge-danger{% endif %}">{{ a.status }}</span></td>
+            <td>{{ a.total_sales }}</td>
+            <td>${{ "%.2f"|format(a.total_earned) }}</td>
+            <td><a href="{{ url_for('affiliates.admin_affiliate_detail', aff_id=a.id) }}" class="btn btn-sm">View</a></td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% if not affiliates %}<p class="empty-state">No affiliates yet.</p>{% endif %}
+{% endblock %}

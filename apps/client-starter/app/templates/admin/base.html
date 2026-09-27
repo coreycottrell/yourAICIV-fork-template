@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex, nofollow">
+    <title>{% block title %}Admin{% endblock %} - {{ cfg.business_name }}</title>
+    {% if cfg.favicon_path %}
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename=cfg.favicon_path) }}">
+    {% endif %}
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+</head>
+<body>
+    <div class="admin-layout">
+        <aside class="admin-sidebar">
+            <div class="logo">{{ cfg.admin_title or cfg.business_name }}</div>
+            <nav>
+                {% for item in admin_nav %}
+                    {% if item.get('divider') %}
+                        <div class="nav-divider"></div>
+                    {% elif item.get('post') %}
+                        <form method="POST" action="{{ url_for(item.endpoint) }}" style="margin: 0;">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" style="background: none; border: none; color: inherit; font: inherit; cursor: pointer; padding: 0.5rem 1rem; width: 100%; text-align: left;">{{ item.label }}</button>
+                        </form>
+                    {% else %}
+                        <a href="{{ url_for(item.endpoint) }}"
+                           {% if item.match in (request.endpoint or '') %}class="active"{% endif %}
+                           {% if item.get('target') %}target="{{ item.target }}"{% endif %}>
+                            {{ item.label }}
+                        </a>
+                    {% endif %}
+                {% endfor %}
+            </nav>
+        </aside>
+        <main class="admin-main">
+            {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+            {% for category, message in messages %}
+            <div class="flash flash-{{ category }}">{{ message }}</div>
+            {% endfor %}
+            {% endif %}
+            {% endwith %}
+
+            {% block admin_content %}{% endblock %}
+        </main>
+    </div>
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>

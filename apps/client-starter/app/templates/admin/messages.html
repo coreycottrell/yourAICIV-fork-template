@@ -1,0 +1,50 @@
+{% extends "admin/base.html" %}
+{% block title %}Messages{% endblock %}
+{% block admin_content %}
+
+<div class="admin-header">
+    <h1>Contact Messages</h1>
+</div>
+
+{% if messages %}
+<table class="admin-table">
+    <thead>
+        <tr>
+            <th>Name</th>
+            <th>Email</th>
+            <th>Message</th>
+            <th>Date</th>
+            <th>Status</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for msg in messages %}
+        <tr{% if not msg.read %} style="font-weight: bold;"{% endif %}>
+            <td>{{ msg.name }}</td>
+            <td>{{ msg.email }}</td>
+            <td>{{ msg.message[:100] }}{% if msg.message|length > 100 %}...{% endif %}</td>
+            <td>{{ msg.submitted_at[:10] if msg.submitted_at else '' }}</td>
+            <td>
+                {% if msg.read %}
+                <span class="badge badge-completed">Read</span>
+                {% else %}
+                <span class="badge badge-pending">Unread</span>
+                {% endif %}
+            </td>
+            <td>
+                {% if not msg.read %}
+                <form method="POST" action="{{ url_for('admin_message_read', msg_id=msg.id) }}" style="display:inline;">
+                    <button type="submit" class="btn btn-outline btn-sm">Mark Read</button>
+                </form>
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="empty-state">No messages yet.</p>
+{% endif %}
+
+{% endblock %}

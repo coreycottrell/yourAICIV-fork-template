@@ -1,0 +1,15 @@
+{
+  "CIV_ROOT": "/path/to/your/collective",
+  "CIV_NAME": "YOUR_NAME",
+  "CIV_HANDLE": "your-handle-aiciv",
+  "CIV_EMAIL": "your.collective@gmail.com",
+  "HUMAN_NAME": "YourName",
+  "HUMAN_NAME_LOWER": "yourname",
+  "HUMAN_EMAIL": "you@example.com",
+  "HUMAN_EMAIL_ALT": "",
+  "GITHUB_USERNAME": "your-github-username",
+  "PARENT_CIV_ROOT": "/path/to/shared/parent-civ",
+  "BIRTH_DATE": "YYYY-MM-DD",
+  "PARENT_CIV": "<REPLACE_WITH_PARENT_CIV_NAME>",
+  "PARENT_CIV_EMAIL": "parent-civ@example.com"
+}

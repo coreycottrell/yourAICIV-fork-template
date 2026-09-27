@@ -1,0 +1,15 @@
+# client-starter scaffold (yourAICIV delivery engine) -- direct dependencies.
+# This is the human-edited source. requirements.txt is GENERATED from it with
+# pinned versions + hashes; never hand-edit requirements.txt:
+#   pip-compile --generate-hashes --allow-unsafe -o requirements.txt requirements.in
+# Then run ./preflight.sh (pip-audit) before committing.
+
+Flask>=3.1,<4          # app + Werkzeug (scrypt password hashing, ProxyFix)
+Flask-WTF>=1.2,<2      # CSRFProtect on every POST form
+nh3>=0.2.18            # HTML sanitization of admin-authored content (replaces deprecated bleach)
+python-dotenv>=1.0     # loads <instance>/.env at import time (config.py)
+gunicorn>=23           # production WSGI server (run.sh / systemd unit); never the Werkzeug dev server
+
+# Default payment provider (payments.py imports it lazily at checkout and
+# webhook time; the webhook signature check is offline HMAC).
+stripe>=12

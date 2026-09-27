@@ -1,0 +1,51 @@
+{% extends "public/base.html" %}
+{% block title %}{{ product.name }}{% endblock %}
+{% block content %}
+<div style="max-width: 900px; margin: 2rem auto; padding: 0 1rem;">
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 2rem;">
+        <div>
+            {% if product.image %}
+            <img src="{{ url_for('static', filename='images/products/' + product.image) }}" alt="{{ product.name }}"
+                 style="width: 100%; border-radius: 8px;">
+            {% endif %}
+        </div>
+        <div>
+            <h1>{{ product.name }}</h1>
+            <p style="font-size: 1.5rem; font-weight: 700;">${{ "%.2f"|format(product.price) }}</p>
+            {% if product.short_description %}
+            <p>{{ product.short_description }}</p>
+            {% endif %}
+
+            <form method="POST" action="{{ url_for('ecommerce.cart_add') }}" style="margin-top: 1.5rem;">
+                <input type="hidden" name="product_id" value="{{ product.id }}">
+                <div style="margin-bottom: 1rem;">
+                    <label for="qty">Quantity:</label>
+                    <input type="number" name="qty" id="qty" value="1" min="1" max="99" style="width: 60px;">
+                </div>
+                <button type="submit" class="btn btn-primary" style="width: 100%;">Add to Cart</button>
+            </form>
+        </div>
+    </div>
+
+    {% if product.description %}
+    <div style="margin-top: 2rem;">
+        <h2>Description</h2>
+        <div>{{ product.description|sanitize }}</div>
+    </div>
+    {% endif %}
+
+    {% if related %}
+    <div style="margin-top: 3rem;">
+        <h2>Related Products</h2>
+        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem;">
+            {% for r in related %}
+            <a href="{{ url_for('ecommerce.product_detail', slug=r.slug) }}" class="card" style="padding: 0.75rem; text-decoration: none;">
+                <h4>{{ r.name }}</h4>
+                <p>${{ "%.2f"|format(r.price) }}</p>
+            </a>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

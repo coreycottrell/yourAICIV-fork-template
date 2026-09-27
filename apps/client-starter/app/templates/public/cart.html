@@ -1,0 +1,44 @@
+{% extends "public/base.html" %}
+{% block title %}Cart{% endblock %}
+{% block content %}
+<div style="max-width: 700px; margin: 2rem auto; padding: 0 1rem;">
+    <h1>Shopping Cart</h1>
+
+    {% if cart %}
+    <form method="POST" action="{{ url_for('ecommerce.cart_update') }}">
+        <table class="data-table">
+            <thead><tr><th>Item</th><th>Price</th><th>Qty</th><th>Subtotal</th><th></th></tr></thead>
+            <tbody>
+                {% for item in cart %}
+                <tr>
+                    <td>{{ item.name }}{% if item.variant %} ({{ item.variant }}){% endif %}</td>
+                    <td>${{ "%.2f"|format(item.price) }}</td>
+                    <td><input type="number" name="qty_{{ loop.index0 }}" value="{{ item.qty }}" min="0" max="99" style="width: 50px;"></td>
+                    <td>${{ "%.2f"|format(item.price * item.qty) }}</td>
+                    <td>
+                        <form method="POST" action="{{ url_for('ecommerce.cart_remove', index=loop.index0) }}" style="display: inline;">
+                            <button type="submit" class="btn btn-sm btn-danger">X</button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 1.5rem;">
+            <button type="submit" class="btn btn-secondary">Update Cart</button>
+            <div>
+                <strong>Total: ${{ "%.2f"|format(computed_total or 0) }}</strong>
+            </div>
+        </div>
+    </form>
+
+    <div style="margin-top: 1.5rem; text-align: right;">
+        <a href="{{ url_for('ecommerce.checkout') }}" class="btn btn-primary" style="font-size: 1.1rem;">Proceed to Checkout</a>
+    </div>
+    {% else %}
+    <p>Your cart is empty.</p>
+    <a href="{{ url_for('ecommerce.store') }}" class="btn btn-primary">Browse Store</a>
+    {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,6 @@
+{
+  "_comment": "Reseller profile for this distribution. Read by tools/partner_profile.py. Human-facing naming (greetings, trial countdown, expiry note) and the trial payment link come from here. Another reseller = replace this file. Remove it for a plain, unbranded AiCIV.",
+  "brand": "yourAICIV",
+  "reseller": "Travis Morehead",
+  "payment_url": "https://buy.stripe.com/5kQeVe8Xe9D53GZdLb1Fe06"
+}

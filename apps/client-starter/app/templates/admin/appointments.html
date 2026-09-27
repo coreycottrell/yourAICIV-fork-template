@@ -1,0 +1,35 @@
+{% extends "admin/base.html" %}
+{% block title %}Appointments{% endblock %}
+{% block admin_content %}
+<div class="page-header">
+    <h1>Appointments</h1>
+</div>
+
+<table class="data-table">
+    <thead>
+        <tr><th>Name</th><th>Email</th><th>Type</th><th>Date</th><th>Time</th><th>Status</th><th>Actions</th></tr>
+    </thead>
+    <tbody>
+        {% for a in appointments %}
+        <tr>
+            <td>{{ a.contact_name }}</td>
+            <td>{{ a.contact_email }}</td>
+            <td>{{ a.appointment_type }}</td>
+            <td>{{ a.date }}</td>
+            <td>{{ a.time }}</td>
+            <td><span class="badge {% if a.status == 'confirmed' %}badge-success{% elif a.status == 'pending' %}badge-warning{% else %}badge-muted{% endif %}">{{ a.status }}</span></td>
+            <td>
+                <form method="POST" action="{{ url_for('appointments.admin_appointment_status', appt_id=a.id) }}" style="display: inline;">
+                    <select name="status" data-autosubmit>
+                        {% for s in ['pending', 'confirmed', 'completed', 'cancelled'] %}
+                        <option value="{{ s }}" {{ 'selected' if a.status == s }}>{{ s|capitalize }}</option>
+                        {% endfor %}
+                    </select>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% if not appointments %}<p class="empty-state">No appointments yet.</p>{% endif %}
+{% endblock %}

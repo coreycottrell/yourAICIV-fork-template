@@ -1,0 +1,52 @@
+{% extends "admin/base.html" %}
+{% block title %}Contacts{% endblock %}
+{% block admin_content %}
+
+<div class="admin-header">
+    <h1>Contacts ({{ contacts|length }})</h1>
+</div>
+
+<form method="GET" class="search-bar" style="margin-bottom: 24px;">
+    <input type="text" name="q" value="{{ search }}" placeholder="Search by name, email, or phone..." style="flex:1;">
+    <button type="submit" class="btn btn-primary btn-sm">Search</button>
+    {% if search %}
+    <a href="{{ url_for('admin_contacts') }}" class="btn btn-outline btn-sm">Clear</a>
+    {% endif %}
+</form>
+
+{% if contacts %}
+<table class="admin-table">
+    <thead>
+        <tr>
+            <th>Name</th>
+            <th>Email</th>
+            <th>Phone</th>
+            <th>Tags</th>
+            <th>Updated</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for c in contacts %}
+        <tr>
+            <td>{{ c.first_name }} {{ c.last_name }}</td>
+            <td>{{ c.email }}</td>
+            <td>{{ c.phone }}</td>
+            <td>
+                {% for tag in contact_tags.get(c.id, []) %}
+                <span class="tag-pill" style="background: {{ tag.color }}20; color: {{ tag.color }}; border: 1px solid {{ tag.color }}40;">
+                    {{ tag.name }}
+                </span>
+                {% endfor %}
+            </td>
+            <td>{{ c.updated_at[:10] if c.updated_at else '' }}</td>
+            <td><a href="{{ url_for('admin_contact_detail', contact_id=c.id) }}">View</a></td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="empty-state">No contacts found{% if search %} matching "{{ search }}"{% endif %}.</p>
+{% endif %}
+
+{% endblock %}

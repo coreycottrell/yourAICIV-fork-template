@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex, nofollow">
+    <title>Admin Login - {{ cfg.business_name }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <script src="{{ url_for('static', filename='js/app.js') }}" defer></script>
+</head>
+<body class="admin-login">
+    <div class="login-card">
+        {% if cfg.logo_path %}
+        <img src="{{ url_for('static', filename=cfg.logo_path) }}" alt="{{ cfg.business_name }}"
+             style="width: 48px; margin: 0 auto 16px;" data-hide-on-error>
+        {% endif %}
+        <h1>{{ cfg.admin_title or 'Admin Login' }}</h1>
+        {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+        {% for category, message in messages %}
+        <div class="flash flash-{{ category }}" style="text-align: left;">{{ message }}</div>
+        {% endfor %}
+        {% endif %}
+        {% endwith %}
+        <form method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="form-group">
+                <label for="username">Username</label>
+                <input type="text" id="username" name="username" required autofocus>
+            </div>
+            <div class="form-group">
+                <label for="password">Password</label>
+                <input type="password" id="password" name="password" required>
+            </div>
+            <button type="submit" class="btn btn-primary btn-block" style="margin-top: 8px;">Log In</button>
+        </form>
+        <a href="{{ url_for('index') }}" class="back-link">&larr; Back to site</a>
+    </div>
+</body>
+</html>

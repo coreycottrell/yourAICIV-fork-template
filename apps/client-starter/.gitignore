@@ -1,0 +1,13 @@
+# Per-instance secrets, customer data and runtime output. clone_client.sh
+# copies this file into every client instance; never remove these lines.
+.env
+.env.*
+.setup-link
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+__pycache__/
+*.pyc
+*.log
+logs/

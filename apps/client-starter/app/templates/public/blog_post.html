@@ -1,0 +1,41 @@
+{% extends "public/base.html" %}
+{% block title %}{{ post.title }}{% endblock %}
+{% block content %}
+<div style="max-width: 800px; margin: 2rem auto; padding: 0 1rem;">
+    <article>
+        {% if post.featured_image %}
+        <img src="{{ url_for('static', filename='images/blog/' + post.featured_image) }}" alt="{{ post.title }}"
+             style="width: 100%; max-height: 400px; object-fit: cover; border-radius: 8px; margin-bottom: 1.5rem;">
+        {% endif %}
+
+        <h1>{{ post.title }}</h1>
+        <p style="color: var(--text-muted); margin-bottom: 2rem;">
+            {% if post.author %}By {{ post.author }} &middot; {% endif %}
+            {{ post.created_at[:10] if post.created_at else '' }}
+            {% if post.tags %} &middot; {{ post.tags }}{% endif %}
+        </p>
+
+        <div class="blog-content">
+            {{ post.content|sanitize }}
+        </div>
+    </article>
+
+    {% if related %}
+    <div style="margin-top: 3rem; border-top: 1px solid #eee; padding-top: 2rem;">
+        <h3>Related Posts</h3>
+        <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 1rem;">
+            {% for r in related %}
+            <a href="{{ url_for('blog.blog_post', slug=r.slug) }}" class="card" style="padding: 1rem; text-decoration: none; color: inherit;">
+                <h4>{{ r.title }}</h4>
+                <p style="font-size: 0.875rem; color: var(--text-muted);">{{ r.created_at[:10] if r.created_at else '' }}</p>
+            </a>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    <div style="margin-top: 2rem;">
+        <a href="{{ url_for('blog.blog_list') }}">&larr; Back to Blog</a>
+    </div>
+</div>
+{% endblock %}

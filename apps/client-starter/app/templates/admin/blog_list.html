@@ -1,0 +1,50 @@
+{% extends "admin/base.html" %}
+{% block title %}Blog Posts{% endblock %}
+{% block admin_content %}
+<div class="page-header">
+    <h1>Blog Posts</h1>
+    <a href="{{ url_for('blog.admin_blog_new') }}" class="btn btn-primary">New Post</a>
+</div>
+
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>Title</th>
+            <th>Slug</th>
+            <th>Status</th>
+            <th>Created</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for p in posts %}
+        <tr>
+            <td>{{ p.title }}</td>
+            <td><code>{{ p.slug }}</code></td>
+            <td>
+                {% if p.published %}
+                <span class="badge badge-success">Published</span>
+                {% else %}
+                <span class="badge badge-muted">Draft</span>
+                {% endif %}
+            </td>
+            <td>{{ p.created_at or '' }}</td>
+            <td>
+                <a href="{{ url_for('blog.admin_blog_edit', post_id=p.id) }}" class="btn btn-sm">Edit</a>
+                <form method="POST" action="{{ url_for('blog.admin_blog_toggle_publish', post_id=p.id) }}" style="display: inline;">
+                    <button type="submit" class="btn btn-sm">{{ 'Unpublish' if p.published else 'Publish' }}</button>
+                </form>
+                <form method="POST" action="{{ url_for('blog.admin_blog_delete', post_id=p.id) }}" style="display: inline;"
+                      data-confirm="Delete this post?">
+                    <button type="submit" class="btn btn-sm btn-danger">Del</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+{% if not posts %}
+<p class="empty-state">No blog posts yet. <a href="{{ url_for('blog.admin_blog_new') }}">Write one</a>.</p>
+{% endif %}
+{% endblock %}

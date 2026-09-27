@@ -1,0 +1,59 @@
+{% extends "public/base.html" %}
+{% block title %}Book an Appointment{% endblock %}
+{% block content %}
+<div style="max-width: 600px; margin: 2rem auto; padding: 0 1rem;">
+    <h1>Book an Appointment</h1>
+
+    {% if success %}
+    <div class="card" style="padding: 2rem; text-align: center;">
+        <div style="font-size: 3rem; margin-bottom: 1rem;">&#10003;</div>
+        <h2>Booking Request Submitted!</h2>
+        <p>We will contact you shortly to confirm your appointment.</p>
+        <a href="{{ url_for('index') }}" class="btn btn-primary" style="margin-top: 1rem;">Return to Home</a>
+    </div>
+    {% else %}
+
+    <p style="margin-bottom: 1.5rem; color: var(--text-muted);">
+        Fill out the form below and we will get back to you to confirm your appointment.
+    </p>
+
+    <form method="POST" class="card" style="padding: 1.5rem;">
+        <div class="form-group">
+            <label for="name">Full Name *</label>
+            <input type="text" id="name" name="name" required>
+        </div>
+        <div class="form-group">
+            <label for="email">Email *</label>
+            <input type="email" id="email" name="email" required>
+        </div>
+        <div class="form-group">
+            <label for="phone">Phone</label>
+            <input type="tel" id="phone" name="phone">
+        </div>
+        <div class="form-group">
+            <label for="service">Service / Reason</label>
+            <input type="text" id="service" name="service" placeholder="What are you booking for?">
+        </div>
+        <div class="form-group">
+            <label for="preferred_date">Preferred Date</label>
+            <input type="date" id="preferred_date" name="preferred_date">
+        </div>
+        <div class="form-group">
+            <label for="preferred_time">Preferred Time</label>
+            <select id="preferred_time" name="preferred_time">
+                <option value="">-- Select --</option>
+                <option value="morning">Morning (9am - 12pm)</option>
+                <option value="afternoon">Afternoon (12pm - 5pm)</option>
+                <option value="evening">Evening (5pm - 8pm)</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label for="notes">Additional Notes</label>
+            <textarea id="notes" name="notes" rows="3" placeholder="Anything else we should know?"></textarea>
+        </div>
+
+        <button type="submit" class="btn btn-primary" style="width: 100%;">Submit Booking Request</button>
+    </form>
+    {% endif %}
+</div>
+{% endblock %}

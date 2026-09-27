@@ -1,0 +1,66 @@
+{% extends "public/base.html" %}
+{% block title %}Affiliate Dashboard{% endblock %}
+{% block content %}
+<div style="max-width: 900px; margin: 2rem auto; padding: 0 1rem;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem;">
+        <h1>Affiliate Dashboard</h1>
+        <form method="POST" action="{{ url_for('affiliates.affiliate_logout') }}" style="display: inline;">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-secondary">Logout</button>
+        </form>
+    </div>
+
+    <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 2rem;">
+        <div class="card" style="padding: 1rem; text-align: center;">
+            <div style="font-size: 2rem; font-weight: 700;">{{ stats.total_clicks }}</div>
+            <div style="color: var(--text-muted);">Total Clicks</div>
+        </div>
+        <div class="card" style="padding: 1rem; text-align: center;">
+            <div style="font-size: 2rem; font-weight: 700;">{{ stats.total_conversions }}</div>
+            <div style="color: var(--text-muted);">Conversions</div>
+        </div>
+        <div class="card" style="padding: 1rem; text-align: center;">
+            <div style="font-size: 2rem; font-weight: 700;">${{ "%.2f"|format(stats.total_earned) }}</div>
+            <div style="color: var(--text-muted);">Total Earned</div>
+        </div>
+        <div class="card" style="padding: 1rem; text-align: center;">
+            <div style="font-size: 2rem; font-weight: 700;">${{ "%.2f"|format(stats.pending) }}</div>
+            <div style="color: var(--text-muted);">Pending Payout</div>
+        </div>
+    </div>
+
+    <div class="card" style="padding: 1.5rem; margin-bottom: 2rem;">
+        <h3>Your Referral Link</h3>
+        <div style="display: flex; gap: 0.5rem; align-items: center;">
+            <input type="text" id="ref-link" value="{{ referral_url }}" readonly
+                   style="flex: 1; font-family: monospace; font-size: 0.875rem;">
+            <button type="button" data-copy-target="ref-link"
+                    class="btn btn-primary">Copy</button>
+        </div>
+    </div>
+
+    {% if commissions %}
+    <div class="card" style="padding: 1.5rem;">
+        <h3>Recent Commissions</h3>
+        <table class="data-table">
+            <thead>
+                <tr><th>Date</th><th>Order</th><th>Amount</th><th>Commission</th><th>Status</th></tr>
+            </thead>
+            <tbody>
+                {% for c in commissions %}
+                <tr>
+                    <td>{{ c.created_at[:10] }}</td>
+                    <td>#{{ c.order_id }}</td>
+                    <td>${{ "%.2f"|format(c.order_total) }}</td>
+                    <td>${{ "%.2f"|format(c.commission_amount) }}</td>
+                    <td><span class="badge badge-{{ 'success' if c.status == 'paid' else 'warning' }}">{{ c.status }}</span></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p style="color: var(--text-muted);">No commissions yet. Share your referral link to start earning!</p>
+    {% endif %}
+</div>
+{% endblock %}

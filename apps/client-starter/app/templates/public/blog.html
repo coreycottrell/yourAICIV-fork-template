@@ -1,0 +1,34 @@
+{% extends "public/base.html" %}
+{% block title %}Blog{% endblock %}
+{% block content %}
+<div style="max-width: 800px; margin: 2rem auto; padding: 0 1rem;">
+    <h1>Blog</h1>
+
+    {% for post in posts %}
+    <article class="card" style="padding: 1.5rem; margin-bottom: 1.5rem;">
+        {% if post.featured_image %}
+        <img src="{{ url_for('static', filename='images/blog/' + post.featured_image) }}" alt="{{ post.title }}"
+             style="width: 100%; height: 250px; object-fit: cover; border-radius: 4px; margin-bottom: 1rem;">
+        {% endif %}
+        <h2 style="margin-bottom: 0.5rem;">
+            <a href="{{ url_for('blog.blog_post', slug=post.slug) }}" style="text-decoration: none; color: inherit;">
+                {{ post.title }}
+            </a>
+        </h2>
+        <p style="color: var(--text-muted); font-size: 0.875rem; margin-bottom: 0.75rem;">
+            {% if post.author %}By {{ post.author }} &middot; {% endif %}
+            {{ post.created_at[:10] if post.created_at else '' }}
+            {% if post.tags %} &middot; {{ post.tags }}{% endif %}
+        </p>
+        {% if post.excerpt %}
+        <p>{{ post.excerpt }}</p>
+        {% endif %}
+        <a href="{{ url_for('blog.blog_post', slug=post.slug) }}">Read more &rarr;</a>
+    </article>
+    {% endfor %}
+
+    {% if not posts %}
+    <p>No posts yet. Check back soon!</p>
+    {% endif %}
+</div>
+{% endblock %}

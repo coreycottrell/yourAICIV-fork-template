@@ -1,0 +1,40 @@
+# systemd unit for one client instance (preferred over run.sh when systemd
+# exists). clone_client.sh renders this to deploy/client-<slug>.service.
+#
+# ISOLATION: run each instance as its OWN unprivileged OS user (default
+# client-<slug>), never as the AiCIV's user, so a web-app compromise cannot
+# reach the AiCIV's shell, keys or memories. As root:
+#   useradd --system --no-create-home --shell /usr/sbin/nologin client-<slug>
+#   chown -R client-<slug>: <instance dir>   (keep .env mode 0600)
+#   cp deploy/client-<slug>.service /etc/systemd/system/ && systemctl enable --now client-<slug>
+# Logs: journalctl -u client-<slug>
+[Unit]
+Description=yourAICIV client instance @SLUG@
+After=network.target
+
+[Service]
+Type=simple
+User=@RUN_USER@
+Group=@RUN_USER@
+WorkingDirectory=@INSTANCE_DIR@/app
+EnvironmentFile=@INSTANCE_DIR@/.env
+UMask=0077
+ExecStart=@VENV@/bin/gunicorn --bind 127.0.0.1:@PORT@ --workers 2 --threads 4 app:app
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=@INSTANCE_DIR@/app
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,29 @@
+{% extends "public/base.html" %}
+{% block title %}Affiliate Login{% endblock %}
+{% block content %}
+<div style="max-width: 400px; margin: 4rem auto; padding: 0 1rem;">
+    <h1 style="text-align: center;">Affiliate Login</h1>
+
+    {% if confirm_token %}
+    <form method="POST" class="card" style="padding: 1.5rem; text-align: center;">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <p>Continue to your affiliate dashboard.</p>
+        <button type="submit" class="btn btn-primary" style="width: 100%;">Sign in</button>
+    </form>
+    {% else %}
+    <form method="POST" action="{{ url_for('affiliates.affiliate_login') }}" class="card" style="padding: 1.5rem;">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="form-group">
+            <label for="email">Email</label>
+            <input type="email" id="email" name="email" required autofocus>
+        </div>
+        <p style="font-size: 0.875rem;">We will email you a one-time sign-in link.</p>
+        <button type="submit" class="btn btn-primary" style="width: 100%;">Email me a sign-in link</button>
+    </form>
+    {% endif %}
+
+    <p style="text-align: center; margin-top: 1rem;">
+        <a href="{{ url_for('affiliates.affiliate_apply') }}">Apply to become an affiliate</a>
+    </p>
+</div>
+{% endblock %}
