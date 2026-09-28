@@ -181,6 +181,16 @@ def main():
 
     session_type = get_session_type(hook_input)
 
+    # WATCHDOG SELF-HEAL: a container restart kills tools/watchdog.sh and the entrypoint
+    # has no startup hook; this session start is what runs after one. Idempotent (no-op
+    # while it runs), a few ms, silent on stdout, never raises; logs to logs/watchdog.log.
+    try:
+        sys.path.insert(0, str(Path(PROJECT_DIR) / "tools"))
+        import ensure_watchdog
+        ensure_watchdog.ensure(PROJECT_DIR)
+    except Exception:
+        pass
+
     # Process unprocessed ledgers from previous sessions
     unprocessed = process_unprocessed_ledgers()
 

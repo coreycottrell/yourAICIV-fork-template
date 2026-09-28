@@ -183,12 +183,28 @@ webhook on the payment link that calls `convert` for the matching civ.
 
 ---
 
+## Watchdog after a container restart
+
+Birth starts `tools/watchdog.sh` in a detached tmux session named `watchdog`. A container restart kills it, and
+nothing in the container brings it back. The AiCIV's own session start does: the SessionStart hook runs
+`tools/ensure_watchdog.py`, which starts the watchdog the same way when it is not running and does nothing when
+it is. It never starts a second copy, never blocks the session, and logs one line to `logs/watchdog.log` when it
+acts. It only acts in the civ root (`/home/aiciv/civ`); `AICIV_ENSURE_WATCHDOG=0` turns it off. No fleet
+startup hook is needed.
+
+When the watchdog restarts the portal (`start.sh`), it passes `PORTAL_PUBLIC_URL` and `TRIAL_CONFIG_PATH`
+through. A value missing from its own environment is read from `~/.env`, then `<civ>/.env`, and
+`TRIAL_CONFIG_PATH` finally from `.claude/settings.json` `env`.
+
+---
+
 ## Checks
 
 ```bash
 python3 tools/test_trial_profile.py                 # trial + partner regression suite (scratch births, no network)
 python3 tools/test_partner_notify.py                # partner notifications: off by default = silent; switched on = every event once (stub)
 apps/.venv/bin/python tools/test_delivery_engine.py # delivery engine (owner-only alerts by default; partner copy when switched on)
+python3 tools/test_ensure_watchdog.py               # watchdog self-heal after a container restart + portal env passthrough
 python3 tools/apply_trial_profile.py check          # on a trial civ: no frontier model reachable
 python3 tools/trial_state.py status                 # the /api/trial JSON (not a trial -> "trial": false)
 ```

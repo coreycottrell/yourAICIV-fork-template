@@ -40,7 +40,10 @@ check_already_running() {
     if [[ -f "$PIDFILE" ]]; then
         local old_pid
         old_pid=$(cat "$PIDFILE")
-        if kill -0 "$old_pid" 2>/dev/null; then
+        # After a container restart the pidfile can survive while its PID now belongs to
+        # an unrelated process -- only a live watchdog.sh counts as "already running".
+        if kill -0 "$old_pid" 2>/dev/null && \
+           tr '\0' ' ' 2>/dev/null < "/proc/${old_pid}/cmdline" | grep -q "watchdog\.sh"; then
             echo "Watchdog already running (PID $old_pid). Exiting."
             exit 0
         fi
@@ -82,6 +85,48 @@ track_restart() {
     return 0
 }
 
+# ── Portal environment ──────────────────────────────────────────────
+# Birth gives the portal PORTAL_PUBLIC_URL (also written to ~/.env) and, for M3 trials,
+# TRIAL_CONFIG_PATH (the operator copy, e.g. /etc/aiciv/trial.json; also recorded in
+# .claude/settings.json env). A portal restarted from here must keep both: any that is
+# missing from this watchdog's own env is read from ~/.env, then <civ>/.env, and
+# TRIAL_CONFIG_PATH finally from .claude/settings.json env. The process env wins.
+PORTAL_ENV_VARS=(PORTAL_PUBLIC_URL TRIAL_CONFIG_PATH)
+
+# env_file_get <file> <VAR> -- last VAR=value line (optional "export ", quotes stripped)
+env_file_get() {
+    [[ -r "$1" ]] || return 0
+    grep -E "^[[:space:]]*(export[[:space:]]+)?$2=" "$1" 2>/dev/null | tail -1 | \
+        sed -E "s/^[[:space:]]*(export[[:space:]]+)?$2=//; s/[[:space:]]+\$//; s/^\"(.*)\"\$/\1/; s/^'(.*)'\$/\1/" || true
+}
+
+portal_env() {
+    local var val src summary=""
+    for var in "${PORTAL_ENV_VARS[@]}"; do
+        if [[ -n "${!var:-}" ]]; then
+            summary+=" ${var}=env"
+            continue
+        fi
+        val=""; src=""
+        for src in "${HOME:-/home/aiciv}/.env" "${CLAUDE_PROJECT_DIR}/.env"; do
+            val=$(env_file_get "$src" "$var")
+            [[ -n "$val" ]] && break
+        done
+        if [[ -z "$val" && "$var" == "TRIAL_CONFIG_PATH" ]]; then
+            src="${CLAUDE_PROJECT_DIR}/.claude/settings.json"
+            val=$(python3 -c 'import json,sys; print((json.load(open(sys.argv[1])).get("env") or {}).get("TRIAL_CONFIG_PATH",""))' \
+                  "$src" 2>/dev/null || true)
+        fi
+        if [[ -n "$val" ]]; then
+            export "${var}=${val}"
+            summary+=" ${var}=${src}"
+        else
+            summary+=" ${var}=unset"
+        fi
+    done
+    log "Portal env:${summary}"
+}
+
 # ── Process Checks ───────────────────────────────────────────────────
 PORTAL_HEALTHY=false
 TELEGRAM_ALIVE=false
@@ -112,6 +157,7 @@ portal_check() {
 
     log "Restarting portal from ${PORTAL_DIR}"
     if [[ -d "$PORTAL_DIR" ]]; then
+        portal_env
         cd "$PORTAL_DIR"
         if [[ -f "$PORTAL_DIR/start.sh" ]]; then   # Python portal (portal_server.py)
             nohup bash "$PORTAL_DIR/start.sh" >> /home/aiciv/civ/logs/portal.log 2>&1 &
