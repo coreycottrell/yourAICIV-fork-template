@@ -1,6 +1,6 @@
 #!/bin/bash
 # AICIV Self-Restart Script (generic — reads identity from .aiciv-identity.json)
-# Usage: ssh root@HOST "docker exec -u aiciv <CONTAINER> bash /home/aiciv/civ/tools/restart-self.sh"
+# Usage: ssh root@HOST "docker exec -u aiciv <CONTAINER> bash /home/aiciv/tools/restart-self.sh"
 # Safe: kills ALL old Claude processes and sessions, then launches fresh.
 
 IDENTITY_FILE="/home/aiciv/.aiciv-identity.json"
@@ -66,8 +66,8 @@ fi
 echo "Verified: session $SESSION is active, .current_session updated"
 
 # Auto-register in pane registry (pane identity system)
-if [ -f "/home/aiciv/civ/tools/pane_registry.py" ]; then
-    python3 /home/aiciv/civ/tools/pane_registry.py register \
+if [ -f "$PROJECT_DIR/tools/pane_registry.py" ]; then
+    python3 "$PROJECT_DIR/tools/pane_registry.py" register \
         --name "${CIV}-primary" --role primary --session "$SESSION" 2>/dev/null || true
 fi
 
@@ -96,4 +96,4 @@ echo "Wait for haiku on Telegram to confirm alive."
 
 # Start TG bot if not running (2-line safety net)
 sleep 5
-pgrep -f "/home/aiciv/civ.*telegram_unified.py" > /dev/null || /home/aiciv/civ/tools/start_telegram_bot.sh 2>/dev/null || true
+pgrep -f "telegram_unified.py" > /dev/null || bash "$PROJECT_DIR/tools/start_telegram_bot.sh" 2>/dev/null || true

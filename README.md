@@ -189,8 +189,15 @@ Birth starts `tools/watchdog.sh` in a detached tmux session named `watchdog`. A 
 nothing in the container brings it back. The AiCIV's own session start does: the SessionStart hook runs
 `tools/ensure_watchdog.py`, which starts the watchdog the same way when it is not running and does nothing when
 it is. It never starts a second copy, never blocks the session, and logs one line to `logs/watchdog.log` when it
-acts. It only acts in the civ root (`/home/aiciv/civ`); `AICIV_ENSURE_WATCHDOG=0` turns it off. No fleet
-startup hook is needed.
+acts. It only acts in the civ root: the tree it ships in, when that tree is `$HOME` (the fleet checks the template
+out at `/home/aiciv`, which is also HOME; the older `/home/aiciv/civ` layout is also accepted). A copy anywhere
+else (a developer checkout, a test copy) is left alone. `AICIV_CIV_ROOT` overrides the root;
+`AICIV_ENSURE_WATCHDOG=0` turns it off. No fleet startup hook is needed.
+
+The command it starts carries the root along (`CLAUDE_PROJECT_DIR=<root> HOME=<home> bash <root>/tools/watchdog.sh`),
+and `watchdog.sh` itself defaults `CLAUDE_PROJECT_DIR` to the tree it lives in, so its log, `.current_session`,
+client sites and partner notifications always resolve to the civ's own tree. `bash tools/watchdog.sh --config`
+prints what it resolved.
 
 When the watchdog restarts the portal (`start.sh`), it passes `PORTAL_PUBLIC_URL` and `TRIAL_CONFIG_PATH`
 through. A value missing from its own environment is read from `~/.env`, then `<civ>/.env`, and

@@ -7,19 +7,30 @@ startup hook, so nothing brought it back. What DOES run after a restart is the
 AiCIV's Claude session (the fleet's restart/launch path), and with it the
 SessionStart hook. That hook calls ensure() here:
 
-  * watchdog.sh already running (any copy)      -> no-op, silent
-  * not running, no tmux session "watchdog"     -> tmux new-session -d -s watchdog 'bash <civ>/tools/watchdog.sh'
-  * not running, a stale "watchdog" session     -> a new window in that session, same command
+  * watchdog.sh already running (any copy)  -> "running", silent
+  * not running, no tmux session "watchdog" -> tmux new-session -d -s watchdog
+        'CLAUDE_PROJECT_DIR=<civ> HOME=<home> bash <civ>/tools/watchdog.sh'
+        -> "started in tmux session 'watchdog'"
+  * not running, a stale "watchdog" session -> a new window in that session, same command
+        -> "started in a new window of the existing tmux session 'watchdog'"
 
 It never starts a second copy (watchdog.sh also refuses to run twice via its
 pidfile), never blocks session start (every subprocess has a short timeout),
 never raises, prints nothing to stdout, and logs one line to logs/watchdog.log
 when it acts or fails.
 
-It only acts for the civ the watchdog serves: the project dir must be the civ
-root ($AICIV_CIV_ROOT, default /home/aiciv/civ -- the paths watchdog.sh uses).
-A copy of the tree anywhere else (tests, a developer checkout) is a no-op.
+It only acts for the civ the watchdog serves. The civ root is the tree this file
+lives in (<root>/tools/ensure_watchdog.py), and it must be a LIVE civ's tree: in
+the fleet the template is checked out at /home/aiciv, which is also HOME, so the
+tree must be $HOME (or the legacy /home/aiciv/civ layout). A copy of the tree
+anywhere else (tests, a developer checkout) is a no-op. $AICIV_CIV_ROOT, when
+set, overrides all of that: the project dir must then be exactly that root.
 AICIV_ENSURE_WATCHDOG=0 switches it off.
+
+The started command carries the root along -- CLAUDE_PROJECT_DIR=<root> and
+HOME -- because a tmux server that is already running gives new sessions ITS
+environment, not ours, and watchdog.sh reads client_sites, partner_notify, the
+portal env and its log from CLAUDE_PROJECT_DIR.
 
 CLI:  python3 tools/ensure_watchdog.py [--root DIR]   (prints the outcome)
 """
@@ -27,6 +38,7 @@ CLI:  python3 tools/ensure_watchdog.py [--root DIR]   (prints the outcome)
 from __future__ import annotations
 
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -34,7 +46,8 @@ import time
 from pathlib import Path
 
 SESSION = "watchdog"
-DEFAULT_CIV_ROOT = "/home/aiciv/civ"
+OWN_TREE = Path(__file__).resolve().parent.parent   # the civ tree this file ships in
+LEGACY_CIV_ROOT = "/home/aiciv/civ"                  # older layout: civ tree under HOME
 SHELLS = {"bash", "sh", "dash"}
 TIMEOUT = 2
 
@@ -79,6 +92,37 @@ def watchdog_running(proc: str = "/proc") -> bool:
     return False
 
 
+def _same(a, b) -> bool:
+    try:
+        return Path(a).resolve() == Path(b).resolve()
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return False
+
+
+def is_civ_root(root) -> bool:
+    """The project dir is the civ this watchdog serves.
+
+    $AICIV_CIV_ROOT set -> root must be exactly that. Otherwise root must be the tree this
+    file lives in AND a live civ's tree: $HOME (the fleet: template checked out at
+    /home/aiciv = HOME) or the legacy /home/aiciv/civ.
+    """
+    override = os.environ.get("AICIV_CIV_ROOT")
+    if override:
+        return _same(root, override)
+    if not _same(root, OWN_TREE):
+        return False
+    home = os.environ.get("HOME") or os.path.expanduser("~")
+    return _same(root, home) or _same(root, LEGACY_CIV_ROOT)
+
+
+def start_command(root: Path) -> str:
+    """The shell command tmux runs: watchdog.sh with the root (and HOME) passed along."""
+    root = Path(root).resolve()
+    home = os.environ.get("HOME") or os.path.expanduser("~")
+    return (f"CLAUDE_PROJECT_DIR={shlex.quote(str(root))} HOME={shlex.quote(home)} "
+            f"bash {shlex.quote(str(root / 'tools' / 'watchdog.sh'))}")
+
+
 def ensure(root, tmux: str = "tmux", proc: str | None = None) -> str:
     """Start the watchdog if it is not running. Returns what it did. Never raises."""
     try:
@@ -86,11 +130,7 @@ def ensure(root, tmux: str = "tmux", proc: str | None = None) -> str:
         root = Path(root)
         if os.environ.get("AICIV_ENSURE_WATCHDOG", "1").strip() == "0":
             return "disabled"
-        civ_root = Path(os.environ.get("AICIV_CIV_ROOT") or DEFAULT_CIV_ROOT)
-        try:
-            if root.resolve() != civ_root.resolve():
-                return "skipped: not the civ root"
-        except OSError:
+        if not is_civ_root(root):
             return "skipped: not the civ root"
         script = root / "tools" / "watchdog.sh"
         if not script.is_file():
@@ -101,7 +141,7 @@ def ensure(root, tmux: str = "tmux", proc: str | None = None) -> str:
         env = dict(os.environ)
         env.pop("TMUX", None)          # called from inside the civ's own tmux pane
         env.pop("TMUX_PANE", None)
-        cmd = f"bash {script}"
+        cmd = start_command(root)
         has = subprocess.run([tmux, "has-session", "-t", f"={SESSION}"], env=env,
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                              timeout=TIMEOUT).returncode == 0
@@ -123,8 +163,8 @@ def ensure(root, tmux: str = "tmux", proc: str | None = None) -> str:
             msg = f"failed to start watchdog ({err[-1] if err else f'exit {r.returncode}'})"
             _log(root, msg)
             return msg
-        _log(root, f"watchdog was not running; {how}")
-        return "started"
+        _log(root, f"watchdog was not running; {how} (CLAUDE_PROJECT_DIR={root.resolve()})")
+        return how
     except Exception as e:   # never let this break a session start
         try:
             _log(Path(root), f"error: {e}")

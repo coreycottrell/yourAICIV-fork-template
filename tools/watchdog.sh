@@ -7,17 +7,28 @@
 set -euo pipefail
 
 # ── Configuration ────────────────────────────────────────────────────
-SESSION_NAME="$(cat /home/aiciv/civ/.current_session 2>/dev/null || echo "${CIV_NAME:-aiciv}-primary")"
-CLAUDE_PROJECT_DIR="${CLAUDE_PROJECT_DIR:-/home/aiciv/civ}"
+# The civ tree is the one this script lives in (<civ>/tools/watchdog.sh) unless
+# CLAUDE_PROJECT_DIR says otherwise. In the fleet the template is checked out at
+# /home/aiciv (= HOME); a fixed civ/ subdir would point client_sites,
+# partner_notify, the portal env and the log at a tree without those tools.
+WATCHDOG_TREE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd -P)"
+CLAUDE_PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$WATCHDOG_TREE}"
+export CLAUDE_PROJECT_DIR
+USER_HOME="${HOME:-/home/aiciv}"
+# restart-self.sh records the primary session in <civ>/.current_session and ~/.current_session.
+SESSION_NAME="$(head -1 "${CLAUDE_PROJECT_DIR}/.current_session" 2>/dev/null || true)"
+[[ -n "$SESSION_NAME" ]] || SESSION_NAME="$(head -1 "${USER_HOME}/.current_session" 2>/dev/null || true)"
+SESSION_NAME="${SESSION_NAME:-${CIV_NAME:-aiciv}-primary}"
 # The running portal records its install dir in ~/.portal_dir.
-PORTAL_DIR="$(head -1 /home/aiciv/.portal_dir 2>/dev/null || true)"
-PORTAL_DIR="${PORTAL_DIR:-/home/aiciv/purebrain_portal}"
+PORTAL_DIR="$(head -1 "${USER_HOME}/.portal_dir" 2>/dev/null || true)"
+PORTAL_DIR="${PORTAL_DIR:-${USER_HOME}/purebrain_portal}"
 CHECK_INTERVAL=60
 LOG_MAX_LINES=5000
 LOG_KEEP_LINES=1000
 MAX_RESTARTS=3
 RESTART_WINDOW=600
-LOG="/home/aiciv/civ/logs/watchdog.log"
+LOG_DIR="${CLAUDE_PROJECT_DIR}/logs"
+LOG="${LOG_DIR}/watchdog.log"
 PIDFILE="/tmp/watchdog.pid"
 RESTART_TRACK_DIR="/tmp"
 
@@ -160,9 +171,9 @@ portal_check() {
         portal_env
         cd "$PORTAL_DIR"
         if [[ -f "$PORTAL_DIR/start.sh" ]]; then   # Python portal (portal_server.py)
-            nohup bash "$PORTAL_DIR/start.sh" >> /home/aiciv/civ/logs/portal.log 2>&1 &
+            nohup bash "$PORTAL_DIR/start.sh" >> "${LOG_DIR}/portal.log" 2>&1 &
         else
-            nohup node server.js >> /home/aiciv/civ/logs/portal.log 2>&1 &
+            nohup node server.js >> "${LOG_DIR}/portal.log" 2>&1 &
         fi
         cd - >/dev/null
         sleep 2
@@ -197,7 +208,7 @@ telegram_check() {
     local tg_script="${CLAUDE_PROJECT_DIR}/tools/telegram_unified.py"
     if [[ -f "$tg_script" ]]; then
         log "Restarting Telegram bot"
-        nohup python3 "$tg_script" >> /home/aiciv/civ/logs/telegram.log 2>&1 &
+        nohup python3 "$tg_script" >> "${LOG_DIR}/telegram.log" 2>&1 &
         sleep 2
         if pgrep -f "telegram_unified.py" >/dev/null 2>&1; then
             TELEGRAM_ALIVE=true
@@ -224,7 +235,7 @@ tmux_check() {
 
     log "Recreating tmux session: ${SESSION_NAME}"
     tmux new-session -d -s "$SESSION_NAME"
-    echo "$SESSION_NAME" > /home/aiciv/civ/.current_session
+    echo "$SESSION_NAME" > "${CLAUDE_PROJECT_DIR}/.current_session" 2>/dev/null || true
     if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
         TMUX_ALIVE=true
         log "Tmux session recreated"
@@ -304,6 +315,11 @@ EOJSON
 }
 
 # ── Main Loop ────────────────────────────────────────────────────────
+if [[ "${1:-}" == "--config" ]]; then   # print the resolved paths and exit (operators, tests)
+    printf 'CLAUDE_PROJECT_DIR=%s\nSESSION_NAME=%s\nPORTAL_DIR=%s\nLOG=%s\n' \
+        "$CLAUDE_PROJECT_DIR" "$SESSION_NAME" "$PORTAL_DIR" "$LOG"
+    exit 0
+fi
 mkdir -p "$(dirname "$LOG")"
 check_already_running
 log "Watchdog started (PID $$, session=${SESSION_NAME})"
